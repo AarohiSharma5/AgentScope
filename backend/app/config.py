@@ -1,6 +1,11 @@
 """Application configuration loaded from environment variables."""
 import os
 
+from dotenv import load_dotenv
+
+# Load .env before any config values are read at class-definition time.
+load_dotenv()
+
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 

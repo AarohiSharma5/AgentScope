@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: agentscope-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agentscope
+      POSTGRES_PASSWORD: agentscope
+      POSTGRES_DB: agentscope
+    ports:
+      - "5432:5432"
+    volumes:
+      - agentscope_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentscope -d agentscope"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: agentscope-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://agentscope:agentscope@db:5432/agentscope
+      CORS_ORIGINS: http://localhost:8080
+      SECRET_KEY: change-me-in-production
+      PORT: "5001"
+    ports:
+      - "5001:5001"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: agentscope-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  agentscope_pgdata:
