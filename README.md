@@ -2,7 +2,29 @@
 
 **Chrome DevTools for AI applications.** AgentScope is an open-source developer tool for observing and debugging LLM-powered apps.
 
+![Version](https://img.shields.io/badge/version-0.1.0-6366f1)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Backend](https://img.shields.io/badge/backend-Flask-000000)
+![Database](https://img.shields.io/badge/db-PostgreSQL-336791)
+![Frontend](https://img.shields.io/badge/frontend-React-61dafb)
+
 The first feature is the **AI Request Tracer**: every LLM request is captured and stored with its prompts, model, token usage, cost, latency, retrieved documents, tool calls, response and status — then surfaced in a clean, modern dashboard.
+
+---
+
+## Screenshots
+
+### Dashboard
+
+Aggregate metrics and a table of every captured request.
+
+![AgentScope dashboard](docs/dashboard.png)
+
+### Trace detail
+
+Click any request to inspect every captured field, including retrieved documents and tool calls.
+
+![AgentScope trace detail](docs/trace-detail.png)
 
 ---
 
@@ -20,11 +42,41 @@ The first feature is the **AI Request Tracer**: every LLM request is captured an
 | Backend  | Flask, SQLAlchemy, PostgreSQL          |
 | Frontend | React (Vite), TailwindCSS, React Router|
 | API      | REST (JSON)                            |
+| Infra    | Docker, docker-compose, nginx, gunicorn|
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph App["Your AI App"]
+        TR["TraceRecorder<br/>(context manager)"]
+    end
+
+    subgraph FE["Frontend — React + nginx :8080"]
+        UI["Dashboard + Detail"]
+    end
+
+    subgraph BE["Backend — Flask + gunicorn :5001"]
+        API["REST API<br/>routes"]
+        SVC["Trace service<br/>(stats + cost)"]
+    end
+
+    DB[("PostgreSQL :5432")]
+
+    TR -->|"POST /api/traces"| API
+    UI -->|"GET /api/* (proxied)"| API
+    API --> SVC
+    SVC --> DB
+```
+
+The three services run as containers on one Docker network: the React app (nginx) proxies `/api` to the Flask backend, which persists traces to PostgreSQL.
 
 ## Project Structure
 
 ```
 AgentScope/
+├── docker-compose.yml           # db + backend + frontend, one command
+├── docs/                        # screenshots used in this README
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py          # app factory
@@ -34,10 +86,13 @@ AgentScope/
 │   │   ├── routes/traces.py     # REST endpoints
 │   │   ├── services/trace_service.py   # business logic + stats + cost estimation
 │   │   └── middleware/logging.py       # request logging + TraceRecorder
+│   ├── Dockerfile               # gunicorn-served API
 │   ├── run.py                   # dev entry point
 │   ├── seed.py                  # sample data
 │   └── requirements.txt
 └── frontend/
+    ├── Dockerfile               # multi-stage build + nginx
+    ├── nginx.conf               # serves SPA, proxies /api -> backend
     └── src/
         ├── pages/Dashboard.jsx
         ├── pages/TraceDetail.jsx
@@ -134,4 +189,10 @@ curl -X POST http://localhost:5001/api/traces \
 
 ## Roadmap
 
-This is the first MVP. Planned next: filtering/search, time-range charts, trace grouping by session, and SDK wrappers for popular providers.
+`v0.1.0` is the first frozen MVP. Planned next: filtering/search, time-range charts, trace grouping by session, and SDK wrappers for popular providers.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## License
+
+Released under the [MIT License](LICENSE).
