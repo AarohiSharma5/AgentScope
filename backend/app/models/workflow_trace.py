@@ -177,12 +177,31 @@ class AgentNode(db.Model):
         )
 
 
+class MessageType:
+    """Canonical message types for the agent communication layer (v0.4)."""
+
+    INSTRUCTION = "instruction"
+    OBSERVATION = "observation"
+    QUESTION = "question"
+    ANSWER = "answer"
+    CRITIQUE = "critique"
+    TOOL_RESULT = "tool_result"
+    MEMORY_RESULT = "memory_result"
+
+    ALL = frozenset(
+        {INSTRUCTION, OBSERVATION, QUESTION, ANSWER, CRITIQUE, TOOL_RESULT, MEMORY_RESULT}
+    )
+
+
 class AgentMessage(db.Model):
-    """A message exchanged between two :class:`AgentNode` instances.
+    """A message exchanged between :class:`AgentNode` instances.
 
     ``sender_node_id`` is required and owns the message (deleting the sender
     removes its messages). ``receiver_node_id`` is optional (e.g. broadcasts) and
     uses ``SET NULL`` so removing a receiver leaves the message intact.
+    ``conversation_run_id`` is denormalised so conversation history / timeline /
+    search can be served with a single indexed scan (no joins). ``reply_to_id``
+    threads replies to a prior message (self-referential, ``SET NULL``).
     """
 
     __tablename__ = "agent_messages"
@@ -190,9 +209,20 @@ class AgentMessage(db.Model):
         # Conversation transcript ordering and per-node lookups.
         Index("ix_agent_messages_sender_created", "sender_node_id", "created_at"),
         Index("ix_agent_messages_receiver_created", "receiver_node_id", "created_at"),
+        # Conversation history / timeline: all messages of a conversation, in order.
+        Index("ix_agent_messages_conversation_created", "conversation_run_id", "created_at"),
+        # Filtering a conversation's transcript by message type.
+        Index("ix_agent_messages_conversation_type", "conversation_run_id", "message_type"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
+
+    conversation_run_id = db.Column(
+        db.Integer,
+        db.ForeignKey("conversation_runs.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     sender_node_id = db.Column(
         db.Integer,
@@ -203,6 +233,15 @@ class AgentMessage(db.Model):
     receiver_node_id = db.Column(
         db.Integer,
         db.ForeignKey("agent_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Threads a reply back to the message it answers (nullable; SET NULL so
+    # deleting the parent message keeps the reply as a standalone record).
+    reply_to_id = db.Column(
+        db.Integer,
+        db.ForeignKey("agent_messages.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -227,6 +266,20 @@ class AgentMessage(db.Model):
         "AgentNode",
         foreign_keys=[receiver_node_id],
         backref=db.backref("received_messages", lazy="selectin"),
+    )
+
+    # ConversationRun -> messages (plain relationship; rows are cascade-deleted at
+    # the DB level via the FK and via the sender node's delete-orphan).
+    conversation_run = db.relationship(
+        "ConversationRun",
+        backref=db.backref("messages", order_by="AgentMessage.created_at", lazy="selectin"),
+    )
+
+    # Self-referential reply thread.
+    replies = db.relationship(
+        "AgentMessage",
+        backref=db.backref("reply_to", remote_side=[id]),
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:

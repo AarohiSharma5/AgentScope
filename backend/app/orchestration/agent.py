@@ -14,7 +14,9 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..models.agent_trace import AgentStatus
+from ..models.workflow_trace import MessageType
 from ..services import workflow_service
+from ..services.message_service import message_service
 
 if TYPE_CHECKING:
     from ..models.agent_trace import AgentRun
@@ -54,20 +56,75 @@ class Agent:
         self,
         receiver: Optional["Agent"] = None,
         message: Optional[str] = None,
-        message_type: str = "message",
+        message_type: str = MessageType.INSTRUCTION,
         token_usage: Optional[dict] = None,
         latency_ms: Optional[float] = None,
         metadata: Optional[dict] = None,
+        reply_to=None,
     ):
-        """Send a message to another agent (or broadcast when ``receiver`` is None)."""
-        return workflow_service.create_agent_message(
-            sender_node_id=self.node.id,
-            receiver_node_id=receiver.node.id if receiver is not None else None,
+        """Send a typed message to another agent, persisted via the comms layer."""
+        return message_service.send(
+            sender=self.node,
+            receiver=receiver.node if receiver is not None else None,
             message_type=message_type,
             content=message,
             token_usage=token_usage,
             latency_ms=latency_ms,
             metadata=metadata,
+            reply_to=reply_to,
+            conversation_run_id=self.node.conversation_run_id,
+        )
+
+    def instruct(self, receiver: "Agent", message: str, **kwargs):
+        """Send an ``instruction`` message to another agent."""
+        return self.send(receiver, message, message_type=MessageType.INSTRUCTION, **kwargs)
+
+    def ask(self, receiver: "Agent", message: str, **kwargs):
+        """Send a ``question`` message to another agent."""
+        return self.send(receiver, message, message_type=MessageType.QUESTION, **kwargs)
+
+    def answer(self, receiver: "Agent", message: str, **kwargs):
+        """Send an ``answer`` message to another agent."""
+        return self.send(receiver, message, message_type=MessageType.ANSWER, **kwargs)
+
+    def observe(self, message: str, receiver: Optional["Agent"] = None, **kwargs):
+        """Record an ``observation`` (optionally addressed to an agent)."""
+        return self.send(receiver, message, message_type=MessageType.OBSERVATION, **kwargs)
+
+    def critique(self, receiver: "Agent", message: str, **kwargs):
+        """Send a ``critique`` message to another agent."""
+        return self.send(receiver, message, message_type=MessageType.CRITIQUE, **kwargs)
+
+    def broadcast(
+        self,
+        message: str,
+        message_type: str = MessageType.INSTRUCTION,
+        receivers: Optional[list["Agent"]] = None,
+        **kwargs,
+    ):
+        """Broadcast a message to every other agent (or an explicit subset)."""
+        return message_service.broadcast(
+            sender=self.node,
+            message_type=message_type,
+            content=message,
+            receivers=[a.node for a in receivers] if receivers is not None else None,
+            **kwargs,
+        )
+
+    def reply(
+        self,
+        to_message,
+        message: str,
+        message_type: str = MessageType.ANSWER,
+        **kwargs,
+    ):
+        """Reply to a received message, threading it back to the sender."""
+        return message_service.reply(
+            to_message=to_message,
+            sender=self.node,
+            message_type=message_type,
+            content=message,
+            **kwargs,
         )
 
     # -- Execution ----------------------------------------------------------

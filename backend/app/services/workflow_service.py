@@ -138,11 +138,15 @@ def create_agent_message(
     token_usage: Optional[dict] = None,
     latency_ms: Optional[float] = None,
     metadata: Optional[dict] = None,
+    conversation_run_id: Optional[int] = None,
+    reply_to_id: Optional[int] = None,
 ) -> AgentMessage:
     """Persist a message between agent nodes and return it (committed)."""
     message = AgentMessage(
+        conversation_run_id=conversation_run_id,
         sender_node_id=sender_node_id,
         receiver_node_id=receiver_node_id,
+        reply_to_id=reply_to_id,
         message_type=message_type,
         content=content,
         token_usage=ensure_json_object(token_usage, "token_usage"),
@@ -152,8 +156,8 @@ def create_agent_message(
     db.session.add(message)
     db.session.commit()
     logger.debug(
-        "Recorded agent message id=%s type=%s sender=%s receiver=%s",
-        message.id, message_type, sender_node_id, receiver_node_id,
+        "Recorded agent message id=%s type=%s sender=%s receiver=%s reply_to=%s",
+        message.id, message_type, sender_node_id, receiver_node_id, reply_to_id,
     )
     return message
 
