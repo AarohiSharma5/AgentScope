@@ -658,6 +658,21 @@ class TraceRecorder:
 
     # -- Internal helpers ---------------------------------------------------
 
+    def ensure_run(
+        self,
+        agent_name: str = "Chatbot",
+        agent_type: str = "chatbot",
+        metadata: Optional[dict] = None,
+    ) -> AgentRun:
+        """Return the active run, starting one with the given identity if needed.
+
+        Public helper for subsystems (e.g. the retrieval service) that need a run
+        to attach steps to without caring whether one already exists.
+        """
+        if self._active_run is None:
+            self.begin(agent_name=agent_name, agent_type=agent_type, metadata=metadata)
+        return self._active_run
+
     def _require_run(self) -> AgentRun:
         """Return the active run, auto-starting one if the caller skipped begin()."""
         if self._active_run is None:

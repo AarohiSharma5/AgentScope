@@ -345,6 +345,32 @@ def create_retriever_trace(
     return retriever
 
 
+def update_retriever_trace(
+    retriever_trace_id: int,
+    embedding_time_ms: Optional[float] = None,
+    retrieval_time_ms: Optional[float] = None,
+    num_documents: Optional[int] = None,
+    retrieved_documents: Optional[list] = None,
+) -> Optional[RetrieverTrace]:
+    """Enrich an existing retriever trace with timings and document counts.
+
+    Used by the RetrievalService once embedding + search timings are known.
+    """
+    retriever = db.session.get(RetrieverTrace, retriever_trace_id)
+    if retriever is None:
+        return None
+    if embedding_time_ms is not None:
+        retriever.embedding_time_ms = embedding_time_ms
+    if retrieval_time_ms is not None:
+        retriever.retrieval_time_ms = retrieval_time_ms
+    if num_documents is not None:
+        retriever.num_documents = num_documents
+    if retrieved_documents is not None:
+        retriever.retrieved_documents = ensure_json_array(retrieved_documents, "retrieved_documents")
+    db.session.commit()
+    return retriever
+
+
 # ---------------------------------------------------------------------------
 # Agent execution tracing - read/query layer (v0.2 API)
 #
