@@ -714,3 +714,140 @@ def apply_reranking(
 
     db.session.commit()
     return ordered
+
+
+# ---------------------------------------------------------------------------
+# RAG read/query layer (v0.3 API)
+#
+# Query, pagination, sorting, filtering and aggregation for retriever traces,
+# retrieved documents, embeddings and prompt assemblies. Note: RetrieverTrace
+# has a mapped column named ``query`` which shadows Flask-SQLAlchemy's ``.query``
+# attribute, so ``db.session.query(RetrieverTrace)`` is used here.
+# ---------------------------------------------------------------------------
+
+# Fields a retrieval may be sorted by (RetrieverTrace has no timestamp column,
+# so ``id`` stands in for recency).
+RETRIEVAL_SORTABLE = {
+    "id",
+    "num_documents",
+    "embedding_time_ms",
+    "retrieval_time_ms",
+}
+
+_RETRIEVAL_SORT_COLUMNS = {name: getattr(RetrieverTrace, name) for name in RETRIEVAL_SORTABLE}
+
+
+def is_valid_retrieval_sort(sort: str) -> bool:
+    """Return True if ``sort`` targets an allowed field (optional ``-`` prefix)."""
+    if not sort:
+        return False
+    field = sort[1:] if sort.startswith("-") else sort
+    return field in RETRIEVAL_SORTABLE
+
+
+def _apply_retrieval_sort(query, sort: str):
+    """Apply ordering to a retrieval query. Assumes ``sort`` already validated."""
+    descending = sort.startswith("-")
+    field = sort[1:] if descending else sort
+    column = _RETRIEVAL_SORT_COLUMNS[field]
+    return query.order_by(desc(column) if descending else asc(column))
+
+
+def list_retrievals(
+    page: int = 1,
+    limit: int = 20,
+    q: Optional[str] = None,
+    sort: str = "-id",
+    embedding_model: Optional[str] = None,
+    min_documents: Optional[int] = None,
+) -> tuple[list[RetrieverTrace], int]:
+    """Return a page of retriever traces and the total matching count.
+
+    Search (``q``) matches the query text and (numeric) trace/step ids. Filtering
+    by ``embedding_model`` joins the embedding trace; ``min_documents`` filters on
+    the retrieved document count. Sorting/pagination happen in the database.
+    """
+    query = db.session.query(RetrieverTrace)
+
+    if embedding_model is not None:
+        query = query.join(
+            EmbeddingTrace, EmbeddingTrace.retriever_trace_id == RetrieverTrace.id
+        ).filter(EmbeddingTrace.embedding_model == embedding_model)
+    if min_documents is not None:
+        query = query.filter(RetrieverTrace.num_documents >= min_documents)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                RetrieverTrace.query.ilike(like),
+                cast(RetrieverTrace.id, String).ilike(like),
+                cast(RetrieverTrace.step_id, String).ilike(like),
+            )
+        )
+
+    total = query.count()
+    query = _apply_retrieval_sort(query, sort)
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
+
+
+def get_retrieval(retrieval_id: int) -> Optional[RetrieverTrace]:
+    """Return a single retriever trace by id, or None."""
+    return db.session.get(RetrieverTrace, retrieval_id)
+
+
+def get_prompt_assembly(prompt_id: int) -> Optional[PromptAssembly]:
+    """Return a single prompt assembly by id, or None."""
+    return db.session.get(PromptAssembly, prompt_id)
+
+
+def get_rag_metrics() -> dict:
+    """Compute aggregate RAG metrics across all retrievals."""
+    total_retrievals = db.session.query(func.count(RetrieverTrace.id)).scalar() or 0
+
+    if total_retrievals == 0:
+        return {
+            "total_retrievals": 0,
+            "average_similarity": 0,
+            "average_documents_retrieved": 0,
+            "average_documents_used": 0,
+            "average_embedding_latency": 0,
+            "average_retrieval_latency": 0,
+            "average_prompt_size": 0,
+            "total_embedding_cost": 0,
+            "success_rate": 0,
+        }
+
+    avg_similarity = db.session.query(func.avg(RetrievedDocument.similarity_score)).scalar() or 0
+    avg_docs_retrieved = db.session.query(func.avg(RetrieverTrace.num_documents)).scalar() or 0
+    selected_docs = (
+        db.session.query(func.count(RetrievedDocument.id))
+        .filter(RetrievedDocument.selected.is_(True))
+        .scalar()
+        or 0
+    )
+    avg_embedding_latency = db.session.query(func.avg(EmbeddingTrace.latency_ms)).scalar() or 0
+    avg_retrieval_latency = db.session.query(func.avg(RetrieverTrace.retrieval_time_ms)).scalar() or 0
+    avg_prompt_size = db.session.query(func.avg(PromptAssembly.total_tokens)).scalar() or 0
+    total_embedding_cost = (
+        db.session.query(func.coalesce(func.sum(EmbeddingTrace.cost), 0.0)).scalar() or 0
+    )
+    # "Success" = a retrieval that returned at least one document.
+    successful = (
+        db.session.query(func.count(RetrieverTrace.id))
+        .filter(RetrieverTrace.num_documents > 0)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "total_retrievals": total_retrievals,
+        "average_similarity": round(float(avg_similarity), 4),
+        "average_documents_retrieved": round(float(avg_docs_retrieved), 2),
+        "average_documents_used": round(selected_docs / total_retrievals, 2),
+        "average_embedding_latency": round(float(avg_embedding_latency), 2),
+        "average_retrieval_latency": round(float(avg_retrieval_latency), 2),
+        "average_prompt_size": round(float(avg_prompt_size), 2),
+        "total_embedding_cost": round(float(total_embedding_cost), 8),
+        "success_rate": round(successful / total_retrievals * 100, 2),
+    }
