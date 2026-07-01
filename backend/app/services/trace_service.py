@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import String, asc, cast, desc, func, or_
+from sqlalchemy.orm import selectinload
 
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
@@ -368,6 +369,10 @@ def update_retriever_trace(
     if retrieved_documents is not None:
         retriever.retrieved_documents = ensure_json_array(retrieved_documents, "retrieved_documents")
     db.session.commit()
+    logger.debug(
+        "Updated retriever trace id=%s num_documents=%s retrieval_time_ms=%s",
+        retriever_trace_id, retriever.num_documents, retriever.retrieval_time_ms,
+    )
     return retriever
 
 
@@ -587,6 +592,10 @@ def create_retrieved_document(
     )
     db.session.add(document)
     db.session.commit()
+    logger.debug(
+        "Recorded retrieved document id=%s trace_id=%s selected=%s score=%s",
+        document.id, retriever_trace_id, document.selected, document.similarity_score,
+    )
     return document
 
 
@@ -737,6 +746,31 @@ RETRIEVAL_SORTABLE = {
 _RETRIEVAL_SORT_COLUMNS = {name: getattr(RetrieverTrace, name) for name in RETRIEVAL_SORTABLE}
 
 
+def _retrieval_summary_loaders():
+    """Eager-load options for the fields a retrieval *summary* touches.
+
+    Serializing a list reads each trace's documents, embedding and owning run
+    (via its step); eager-loading them here turns a per-row N+1 into a handful of
+    batched ``SELECT ... IN`` queries.
+    """
+    return (
+        selectinload(RetrieverTrace.documents),
+        selectinload(RetrieverTrace.embedding_trace),
+        selectinload(RetrieverTrace.step).selectinload(AgentStep.agent_run),
+    )
+
+
+def _retrieval_detail_loaders():
+    """Eager-load options for a retrieval *detail* (adds the run's prompt assembly)."""
+    return (
+        selectinload(RetrieverTrace.documents),
+        selectinload(RetrieverTrace.embedding_trace),
+        selectinload(RetrieverTrace.step)
+        .selectinload(AgentStep.agent_run)
+        .selectinload(AgentRun.prompt_assembly),
+    )
+
+
 def is_valid_retrieval_sort(sort: str) -> bool:
     """Return True if ``sort`` targets an allowed field (optional ``-`` prefix)."""
     if not sort:
@@ -767,7 +801,7 @@ def list_retrievals(
     by ``embedding_model`` joins the embedding trace; ``min_documents`` filters on
     the retrieved document count. Sorting/pagination happen in the database.
     """
-    query = db.session.query(RetrieverTrace)
+    query = db.session.query(RetrieverTrace).options(*_retrieval_summary_loaders())
 
     if embedding_model is not None:
         query = query.join(
@@ -792,8 +826,13 @@ def list_retrievals(
 
 
 def get_retrieval(retrieval_id: int) -> Optional[RetrieverTrace]:
-    """Return a single retriever trace by id, or None."""
-    return db.session.get(RetrieverTrace, retrieval_id)
+    """Return a single retriever trace by id (with related data eager-loaded), or None."""
+    return (
+        db.session.query(RetrieverTrace)
+        .options(*_retrieval_detail_loaders())
+        .filter(RetrieverTrace.id == retrieval_id)
+        .one_or_none()
+    )
 
 
 def get_prompt_assembly(prompt_id: int) -> Optional[PromptAssembly]:

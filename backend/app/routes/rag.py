@@ -19,24 +19,12 @@ from ..serializers.rag import (
     serialize_retrieval_summary,
 )
 from ..services import trace_service
+from ..utils.pagination import paginated
 
 rag_bp = Blueprint("rag", __name__)
 
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
-
-
-def _paginated(items: list, page: int, limit: int, total: int) -> dict:
-    """Build the shared paginated collection envelope."""
-    return {
-        "data": items,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "pages": (total + limit - 1) // limit if total else 0,
-        },
-    }
 
 
 @rag_bp.get("/retrievals")
@@ -57,6 +45,8 @@ def list_retrievals():
         q = q.strip() or None
 
     embedding_model = request.args.get("embedding_model")
+    if embedding_model is not None:
+        embedding_model = embedding_model.strip() or None
 
     min_documents = request.args.get("min_documents")
     if min_documents is not None:
@@ -87,7 +77,7 @@ def list_retrievals():
         min_documents=min_documents,
     )
     return jsonify(
-        _paginated([serialize_retrieval_summary(r) for r in items], page, limit, total)
+        paginated([serialize_retrieval_summary(r) for r in items], page, limit, total)
     )
 
 

@@ -146,3 +146,21 @@ def test_rag_metrics_empty(client, app_ctx):
     body = client.get("/api/dashboard/rag-metrics").get_json()
     assert body["total_retrievals"] == 0
     assert body["success_rate"] == 0
+
+
+def test_list_retrievals_pagination_and_sort(client, app):
+    with app.app_context():
+        for _ in range(3):
+            _seed_retrieval()
+
+    page1 = client.get("/api/retrievals?limit=2&page=1").get_json()
+    assert page1["pagination"]["total"] == 3
+    assert page1["pagination"]["pages"] == 2
+    assert len(page1["data"]) == 2
+
+    page2 = client.get("/api/retrievals?limit=2&page=2").get_json()
+    assert len(page2["data"]) == 1
+
+    # Default sort is -id (newest first).
+    ids = [row["id"] for row in client.get("/api/retrievals?limit=10").get_json()["data"]]
+    assert ids == sorted(ids, reverse=True)

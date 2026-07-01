@@ -46,6 +46,8 @@ class RetrievedDocument(db.Model):
         # Fetching a trace's documents filtered/ordered by selection or score.
         Index("ix_retrieved_documents_trace_selected", "retriever_trace_id", "selected"),
         Index("ix_retrieved_documents_trace_score", "retriever_trace_id", "similarity_score"),
+        # The relationship loads documents ordered by chunk_index per trace.
+        Index("ix_retrieved_documents_trace_chunk", "retriever_trace_id", "chunk_index"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

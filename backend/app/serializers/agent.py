@@ -4,9 +4,6 @@ These are pure functions (no DB access) that turn ORM instances into
 JSON-serializable dictionaries. They are reused across list, detail and
 per-request endpoints so response shapes stay consistent.
 """
-from datetime import datetime
-from typing import Optional
-
 from ..models.agent_trace import (
     AgentRun,
     AgentStep,
@@ -14,11 +11,7 @@ from ..models.agent_trace import (
     MemoryAccess,
     RetrieverTrace,
 )
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    """Return an ISO-8601 string for a datetime, or None."""
-    return value.isoformat() if value else None
+from .common import iso as _iso
 
 
 def serialize_tool(tool: ToolExecution) -> dict:

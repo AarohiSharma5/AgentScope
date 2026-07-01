@@ -4,16 +4,11 @@ Like :mod:`app.serializers.agent`, these are pure functions (no DB access) that
 turn ORM instances into JSON-serializable dictionaries so response shapes stay
 consistent across the list, detail, prompt and metrics endpoints.
 """
-from datetime import datetime
 from typing import Optional
 
 from ..models.agent_trace import RetrieverTrace
 from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
-
-
-def _iso(value: Optional[datetime]) -> Optional[str]:
-    """Return an ISO-8601 string for a datetime, or None."""
-    return value.isoformat() if value else None
+from .common import iso as _iso
 
 
 def serialize_embedding(embedding: EmbeddingTrace) -> dict:

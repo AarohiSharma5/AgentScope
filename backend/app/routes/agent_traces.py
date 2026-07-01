@@ -16,6 +16,7 @@ from ..errors import error_response
 from ..models.agent_trace import AgentStatus
 from ..serializers.agent import serialize_run_detail, serialize_run_summary
 from ..services import trace_service
+from ..utils.pagination import paginated
 
 agent_traces_bp = Blueprint("agent_traces", __name__)
 
@@ -28,19 +29,6 @@ _ALLOWED_STATUS = {
 
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
-
-
-def _paginated(items: list, page: int, limit: int, total: int) -> dict:
-    """Build the shared paginated collection envelope."""
-    return {
-        "data": items,
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "pages": (total + limit - 1) // limit if total else 0,
-        },
-    }
 
 
 @agent_traces_bp.get("/agent-runs")
@@ -81,7 +69,7 @@ def list_agent_runs():
     items, total = trace_service.list_agent_runs(
         page=page, limit=limit, status=status, agent_type=agent_type, sort=sort, q=q
     )
-    return jsonify(_paginated([serialize_run_summary(r) for r in items], page, limit, total))
+    return jsonify(paginated([serialize_run_summary(r) for r in items], page, limit, total))
 
 
 @agent_traces_bp.get("/agent-runs/<int:run_id>")
@@ -102,7 +90,7 @@ def list_runs_for_request(request_id: int):
     runs = trace_service.list_agent_runs_for_request(request_id)
     data = [serialize_run_summary(run) for run in runs]
     # Single-page envelope keeps the response shape consistent with /agent-runs.
-    return jsonify(_paginated(data, page=1, limit=max(len(data), 1), total=len(data)))
+    return jsonify(paginated(data, page=1, limit=max(len(data), 1), total=len(data)))
 
 
 @agent_traces_bp.get("/dashboard/agent-metrics")
