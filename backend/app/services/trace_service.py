@@ -10,7 +10,7 @@ This module also owns the persistence layer for **agent execution tracing**
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import asc, desc, func
+from sqlalchemy import String, asc, cast, desc, func, or_
 
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
@@ -357,17 +357,30 @@ def list_agent_runs(
     status: Optional[str] = None,
     agent_type: Optional[str] = None,
     sort: str = "-created_at",
+    q: Optional[str] = None,
 ) -> tuple[list[AgentRun], int]:
     """Return a page of agent runs and the total matching count.
 
-    Filtering by ``status`` / ``agent_type``, sorting and pagination are all
-    applied at the database level.
+    Filtering by ``status`` / ``agent_type``, free-text search (``q``), sorting
+    and pagination are all applied at the database level. Search matches the
+    agent name, type, status and (numeric) run/request ids, case-insensitively.
     """
     query = AgentRun.query
     if status is not None:
         query = query.filter(AgentRun.status == status)
     if agent_type is not None:
         query = query.filter(AgentRun.agent_type == agent_type)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                AgentRun.agent_name.ilike(like),
+                AgentRun.agent_type.ilike(like),
+                AgentRun.status.ilike(like),
+                cast(AgentRun.id, String).ilike(like),
+                cast(AgentRun.request_id, String).ilike(like),
+            )
+        )
 
     total = query.count()
     query = _apply_agent_run_sort(query, sort)

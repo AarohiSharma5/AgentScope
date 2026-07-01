@@ -45,6 +45,11 @@ def list_agent_runs():
         )
     agent_type = request.args.get("agent_type")
 
+    # Free-text search
+    q = request.args.get("q")
+    if q is not None:
+        q = q.strip() or None
+
     # Sorting
     sort = request.args.get("sort", "-created_at")
     if not trace_service.is_valid_agent_run_sort(sort):
@@ -60,7 +65,7 @@ def list_agent_runs():
         )
 
     items, total = trace_service.list_agent_runs(
-        page=page, limit=limit, status=status, agent_type=agent_type, sort=sort
+        page=page, limit=limit, status=status, agent_type=agent_type, sort=sort, q=q
     )
 
     return jsonify(

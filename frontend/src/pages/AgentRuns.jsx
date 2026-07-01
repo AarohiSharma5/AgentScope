@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client.js";
 import AgentRunsTable from "../components/agent/AgentRunsTable.jsx";
 import SearchInput from "../components/SearchInput.jsx";
@@ -18,37 +18,31 @@ const SORT_OPTIONS = [
   { value: "status", label: "Status" },
 ];
 
-// Client-side text filter over the loaded page.
-function matches(run, term) {
-  if (!term) return true;
-  const haystack = [
-    run.id,
-    run.request_id,
-    run.agent_name,
-    run.agent_type,
-    run.status,
-  ]
-    .filter((v) => v != null)
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(term.toLowerCase());
-}
-
 export default function AgentRuns() {
   const [runs, setRuns] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("-created_at");
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState(""); // debounced, server-side search term
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Debounce the search box, then reset to page 1 for the new query.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setQuery(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError(null);
     api
-      .getAgentRuns({ page, limit: LIMIT, sort })
+      .getAgentRuns({ page, limit: LIMIT, sort, q: query })
       .then((res) => {
         if (!active) return;
         setRuns(res.data);
@@ -59,12 +53,7 @@ export default function AgentRuns() {
     return () => {
       active = false;
     };
-  }, [page, sort]);
-
-  const filtered = useMemo(
-    () => runs.filter((run) => matches(run, search)),
-    [runs, search]
-  );
+  }, [page, sort, query]);
 
   return (
     <div className="space-y-6">
@@ -107,12 +96,16 @@ export default function AgentRuns() {
       ) : error ? (
         <ErrorState message={`Failed to load agent runs: ${error}. Is the backend running?`} />
       ) : pagination.total === 0 ? (
-        <EmptyState message="No agent runs recorded yet. Instrument your agents with the TraceRecorder SDK to see them here." />
-      ) : filtered.length === 0 ? (
-        <EmptyState message="No runs on this page match your search." />
+        <EmptyState
+          message={
+            query
+              ? `No agent runs match “${query}”.`
+              : "No agent runs recorded yet. Instrument your agents with the TraceRecorder SDK to see them here."
+          }
+        />
       ) : (
         <>
-          <AgentRunsTable runs={filtered} />
+          <AgentRunsTable runs={runs} />
           <Pagination
             page={pagination.page}
             pages={pagination.pages}
