@@ -8,6 +8,9 @@ export const fmtLatency = (ms) =>
 
 export const fmtCost = (c) => (c == null ? "—" : `$${Number(c).toFixed(4)}`);
 
+// Similarity / probability score, rendered with 3 decimals.
+export const fmtScore = (s) => (s == null ? "—" : Number(s).toFixed(3));
+
 export const fmtTime = (iso) => {
   if (!iso) return "—";
   const d = new Date(iso);

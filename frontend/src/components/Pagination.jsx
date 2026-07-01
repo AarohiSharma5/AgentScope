@@ -1,4 +1,4 @@
-export default function Pagination({ page, pages, total, onChange }) {
+export default function Pagination({ page, pages, total, onChange, noun = "run" }) {
   const safePages = Math.max(pages || 1, 1);
   const canPrev = page > 1;
   const canNext = page < safePages;
@@ -9,7 +9,7 @@ export default function Pagination({ page, pages, total, onChange }) {
   return (
     <div className="flex items-center justify-between gap-3 text-sm text-gray-500">
       <span>
-        {typeof total === "number" ? `${total} run${total === 1 ? "" : "s"}` : ""}
+        {typeof total === "number" ? `${total} ${noun}${total === 1 ? "" : "s"}` : ""}
       </span>
       <div className="flex items-center gap-2">
         <button className={btn} onClick={() => onChange(page - 1)} disabled={!canPrev}>

@@ -3,6 +3,9 @@ import Dashboard from "./pages/Dashboard.jsx";
 import TraceDetail from "./pages/TraceDetail.jsx";
 import AgentRuns from "./pages/AgentRuns.jsx";
 import AgentRunDetail from "./pages/AgentRunDetail.jsx";
+import RetrievalList from "./pages/RetrievalList.jsx";
+import RetrievalDetail from "./pages/RetrievalDetail.jsx";
+import PromptViewer from "./pages/PromptViewer.jsx";
 
 function NavItem({ to, label, end }) {
   return (
@@ -39,6 +42,7 @@ export default function App() {
             <nav className="flex items-center gap-1">
               <NavItem to="/" label="Requests" end />
               <NavItem to="/agent-runs" label="Agent Runs" />
+              <NavItem to="/retrievals" label="RAG Observatory" />
             </nav>
           </div>
           <a
@@ -56,6 +60,9 @@ export default function App() {
           <Route path="/traces/:id" element={<TraceDetail />} />
           <Route path="/agent-runs" element={<AgentRuns />} />
           <Route path="/agent-runs/:id" element={<AgentRunDetail />} />
+          <Route path="/retrievals" element={<RetrievalList />} />
+          <Route path="/retrievals/:id" element={<RetrievalDetail />} />
+          <Route path="/prompts/:id" element={<PromptViewer />} />
         </Routes>
       </main>
     </div>

@@ -77,11 +77,18 @@ def _agent_run(retrieval: RetrieverTrace):
     return step.agent_run if step else None
 
 
+def _avg_similarity(documents) -> Optional[float]:
+    """Mean similarity across documents that carry a score, or None."""
+    scores = [d.similarity_score for d in documents if d.similarity_score is not None]
+    return round(sum(scores) / len(scores), 4) if scores else None
+
+
 def serialize_retrieval_summary(retrieval: RetrieverTrace) -> dict:
     """Lightweight retrieval representation for list endpoints."""
     documents = retrieval.documents
     embedding = retrieval.embedding_trace
     run = _agent_run(retrieval)
+    doc_count = retrieval.num_documents if retrieval.num_documents is not None else len(documents)
     return {
         "id": retrieval.id,
         "step_id": retrieval.step_id,
@@ -89,9 +96,13 @@ def serialize_retrieval_summary(retrieval: RetrieverTrace) -> dict:
         "query": retrieval.query,
         "num_documents": retrieval.num_documents,
         "selected_count": sum(1 for d in documents if d.selected),
+        "avg_similarity": _avg_similarity(documents),
         "embedding_model": embedding.embedding_model if embedding else None,
         "embedding_time_ms": retrieval.embedding_time_ms,
         "retrieval_time_ms": retrieval.retrieval_time_ms,
+        # A retrieval "succeeded" if it surfaced at least one document
+        # (mirrors the success-rate metric).
+        "status": "success" if doc_count and doc_count > 0 else "failed",
     }
 
 

@@ -39,4 +39,10 @@ export const api = {
   getAgentRun: (id) => request(`/agent-runs/${id}`),
   getRequestAgentRuns: (requestId) => request(`/requests/${requestId}/agent-runs`),
   getAgentMetrics: () => request("/dashboard/agent-metrics"),
+
+  // v0.3 — RAG / retrieval / prompt assembly
+  getRetrievals: (params) => request(`/retrievals${buildQuery(params)}`),
+  getRetrieval: (id) => request(`/retrievals/${id}`),
+  getPrompt: (id) => request(`/prompts/${id}`),
+  getRagMetrics: () => request("/dashboard/rag-metrics"),
 };
