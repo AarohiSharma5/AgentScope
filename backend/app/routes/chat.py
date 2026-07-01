@@ -5,6 +5,7 @@ request-to-response lifecycle (and all tracing) to ``chat_service``.
 """
 from flask import Blueprint, jsonify, request
 
+from ..errors import error_response
 from ..services import chat_service
 
 chat_bp = Blueprint("chat", __name__)
@@ -16,7 +17,7 @@ def chat():
     payload = request.get_json(silent=True) or {}
     user_prompt = payload.get("user_prompt")
     if not user_prompt or not str(user_prompt).strip():
-        return jsonify({"error": "user_prompt is required"}), 400
+        return error_response("user_prompt is required", 400)
 
     result = chat_service.run_chat(payload)
     return jsonify(result), 201

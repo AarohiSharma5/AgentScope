@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client.js";
 import StatCard from "../components/StatCard.jsx";
 import TracesTable from "../components/TracesTable.jsx";
+import Loading from "../components/ui/Loading.jsx";
+import ErrorState from "../components/ui/ErrorState.jsx";
+import EmptyState from "../components/ui/EmptyState.jsx";
 import { fmtCost, fmtLatency, fmtNumber } from "../lib/format.js";
 
 export default function Dashboard() {
@@ -21,14 +24,12 @@ export default function Dashboard() {
   }, []);
 
   if (loading) {
-    return <p className="text-gray-500">Loading…</p>;
+    return <Loading label="Loading dashboard…" />;
   }
 
   if (error) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-rose-300">
-        Failed to load data: {error}. Is the backend running on port 5000?
-      </div>
+      <ErrorState message={`Failed to load data: ${error}. Is the backend running?`} />
     );
   }
 
@@ -50,7 +51,15 @@ export default function Dashboard() {
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wider text-gray-500">
           Recent Requests
         </h2>
-        <TracesTable traces={traces} />
+        {traces.length === 0 ? (
+          <EmptyState
+            icon="◇"
+            title="No requests yet"
+            message="Send an LLM request trace to POST /api/traces (or run the chat flow) to populate the dashboard."
+          />
+        ) : (
+          <TracesTable traces={traces} />
+        )}
       </div>
     </div>
   );

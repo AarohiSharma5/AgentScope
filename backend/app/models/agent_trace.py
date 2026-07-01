@@ -12,16 +12,10 @@ Note on ``metadata``: SQLAlchemy's declarative base reserves the attribute name
 as ``run_metadata`` / ``step_metadata`` while still mapping to a database column
 literally named ``metadata``.
 """
-from datetime import datetime, timezone
-
-from sqlalchemy import JSON
+from sqlalchemy import JSON, Index
 
 from ..extensions import db
-
-
-def _utcnow() -> datetime:
-    """Timezone-aware UTC now, used as a column default."""
-    return datetime.now(timezone.utc)
+from ..utils.timeutils import utcnow
 
 
 class AgentStatus:
@@ -42,6 +36,12 @@ class AgentRun(db.Model):
     """
 
     __tablename__ = "agent_runs"
+    __table_args__ = (
+        # Fetching every run for a request, newest first, is a hot path.
+        Index("ix_agent_runs_request_created", "request_id", "created_at"),
+        # Dashboard/list filtering by status ordered by recency.
+        Index("ix_agent_runs_status_created", "status", "created_at"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -58,8 +58,8 @@ class AgentRun(db.Model):
         index=True,
     )
 
-    agent_name = db.Column(db.String(255), nullable=False)
-    agent_type = db.Column(db.String(120), nullable=True)
+    agent_name = db.Column(db.String(255), nullable=False, index=True)
+    agent_type = db.Column(db.String(120), nullable=True, index=True)
 
     status = db.Column(db.String(20), nullable=False, default=AgentStatus.PENDING, index=True)
 
@@ -69,7 +69,7 @@ class AgentRun(db.Model):
 
     run_metadata = db.Column("metadata", JSON, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
     # RequestTrace (Trace) -> AgentRuns. Backref added without touching Trace.
     request = db.relationship(
@@ -85,13 +85,14 @@ class AgentRun(db.Model):
         lazy="select",
     )
 
-    # AgentRun -> AgentSteps.
+    # AgentRun -> AgentSteps. ``selectin`` batches child loads across a page of
+    # runs to avoid N+1 queries when serializing lists and details.
     steps = db.relationship(
         "AgentStep",
         back_populates="agent_run",
         cascade="all, delete-orphan",
         order_by="AgentStep.step_number",
-        lazy="select",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:
@@ -105,6 +106,10 @@ class AgentStep(db.Model):
     """A single step within an agent run (e.g. a reasoning or action step)."""
 
     __tablename__ = "agent_steps"
+    __table_args__ = (
+        # Steps are almost always fetched per-run in step order.
+        Index("ix_agent_steps_run_number", "agent_run_id", "step_number"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -133,16 +138,17 @@ class AgentStep(db.Model):
 
     step_metadata = db.Column("metadata", JSON, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
     agent_run = db.relationship("AgentRun", back_populates="steps")
 
-    # AgentStep -> many ToolExecutions.
+    # AgentStep -> many ToolExecutions. ``selectin`` avoids per-step queries when
+    # building a run's timeline / detail view.
     tool_executions = db.relationship(
         "ToolExecution",
         back_populates="step",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="selectin",
     )
 
     # AgentStep -> MemoryAccess.
@@ -150,7 +156,7 @@ class AgentStep(db.Model):
         "MemoryAccess",
         back_populates="step",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="selectin",
     )
 
     # AgentStep -> RetrieverTrace.
@@ -158,7 +164,7 @@ class AgentStep(db.Model):
         "RetrieverTrace",
         back_populates="step",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="selectin",
     )
 
     def __repr__(self) -> str:
@@ -190,7 +196,7 @@ class ToolExecution(db.Model):
     latency_ms = db.Column(db.Float, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
     step = db.relationship("AgentStep", back_populates="tool_executions")
 

@@ -7,7 +7,8 @@ This module also owns the persistence layer for **agent execution tracing**
 (v0.2). All SQLAlchemy session handling lives here so routes and the
 ``TraceRecorder`` SDK never touch the session directly.
 """
-from datetime import datetime, timezone
+import logging
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import String, asc, cast, desc, func, or_
@@ -22,6 +23,10 @@ from ..models.agent_trace import (
     MemoryAccess,
     RetrieverTrace,
 )
+from ..utils.timeutils import utcnow
+from ..utils.validation import ensure_json_array, ensure_json_object
+
+logger = logging.getLogger("agentscope")
 
 # Rough price table (USD per 1K tokens) used to estimate cost when the caller
 # does not provide one. Extend as needed for your providers.
@@ -70,14 +75,15 @@ def create_trace(data: dict) -> Trace:
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         estimated_cost=estimated_cost,
-        retrieved_documents=data.get("retrieved_documents"),
-        tool_calls=data.get("tool_calls"),
+        retrieved_documents=ensure_json_array(data.get("retrieved_documents"), "retrieved_documents"),
+        tool_calls=ensure_json_array(data.get("tool_calls"), "tool_calls"),
         final_response=data.get("final_response"),
         status=data.get("status", TraceStatus.SUCCESS),
         error_message=data.get("error_message"),
     )
     db.session.add(trace)
     db.session.commit()
+    logger.debug("Created trace id=%s model=%s", trace.id, trace.model_name)
     return trace
 
 
@@ -161,11 +167,6 @@ def get_stats() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _utcnow() -> datetime:
-    """Timezone-aware UTC now."""
-    return datetime.now(timezone.utc)
-
-
 def create_agent_run(
     request_id: int,
     agent_name: str,
@@ -175,18 +176,19 @@ def create_agent_run(
     start_time: Optional[datetime] = None,
     metadata: Optional[dict] = None,
 ) -> AgentRun:
-    """Persist a new agent run and return it (flushed, so ``id`` is set)."""
+    """Persist a new agent run and return it (committed, so ``id`` is set)."""
     run = AgentRun(
         request_id=request_id,
         agent_name=agent_name,
         agent_type=agent_type,
         parent_run_id=parent_run_id,
         status=status,
-        start_time=start_time or _utcnow(),
-        run_metadata=metadata,
+        start_time=start_time or utcnow(),
+        run_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(run)
     db.session.commit()
+    logger.debug("Started agent run id=%s name=%s request_id=%s", run.id, agent_name, request_id)
     return run
 
 
@@ -198,13 +200,14 @@ def finish_agent_run(
     metadata: Optional[dict] = None,
 ) -> AgentRun:
     """Mark an agent run finished, recording end time, latency and status."""
-    run.end_time = end_time or _utcnow()
+    run.end_time = end_time or utcnow()
     run.status = status
     if latency_ms is not None:
         run.latency_ms = latency_ms
     if metadata is not None:
-        run.run_metadata = metadata
+        run.run_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
+    logger.debug("Finished agent run id=%s status=%s latency_ms=%s", run.id, status, run.latency_ms)
     return run
 
 
@@ -230,10 +233,10 @@ def create_agent_step(
         input=input,
         output=output,
         status=status,
-        started_at=started_at or _utcnow(),
-        token_usage=token_usage,
+        started_at=started_at or utcnow(),
+        token_usage=ensure_json_object(token_usage, "token_usage"),
         cost=cost,
-        step_metadata=metadata,
+        step_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(step)
     db.session.commit()
@@ -251,18 +254,18 @@ def finish_agent_step(
     metadata: Optional[dict] = None,
 ) -> AgentStep:
     """Mark a step finished, recording end time, latency, output and status."""
-    step.finished_at = finished_at or _utcnow()
+    step.finished_at = finished_at or utcnow()
     step.status = status
     if output is not None:
         step.output = output
     if token_usage is not None:
-        step.token_usage = token_usage
+        step.token_usage = ensure_json_object(token_usage, "token_usage")
     if cost is not None:
         step.cost = cost
     if latency_ms is not None:
         step.latency_ms = latency_ms
     if metadata is not None:
-        step.step_metadata = metadata
+        step.step_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
     return step
 
@@ -280,7 +283,7 @@ def create_tool_execution(
     tool = ToolExecution(
         step_id=step_id,
         tool_name=tool_name,
-        arguments=arguments,
+        arguments=ensure_json_object(arguments, "arguments"),
         result=result,
         status=status,
         latency_ms=latency_ms,
@@ -324,6 +327,7 @@ def create_retriever_trace(
     num_documents: Optional[int] = None,
 ) -> RetrieverTrace:
     """Persist a retrieval (RAG) call made during a step."""
+    retrieved_documents = ensure_json_array(retrieved_documents, "retrieved_documents")
     if num_documents is None and retrieved_documents is not None:
         num_documents = len(retrieved_documents)
     retriever = RetrieverTrace(

@@ -4,7 +4,15 @@ const BASE = "/api";
 async function request(path) {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status}`);
+    // Surface the backend's consistent { error } envelope when available.
+    let detail = `request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body && body.error) detail = body.error;
+    } catch {
+      /* non-JSON response; fall back to the status message */
+    }
+    throw new Error(detail);
   }
   return res.json();
 }

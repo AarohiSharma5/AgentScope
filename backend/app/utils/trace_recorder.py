@@ -32,12 +32,18 @@ For exception-safe scoping, prefer the context managers::
             ...  # a raised exception marks step & run as failed automatically
 """
 import json
+import logging
 from contextlib import contextmanager
 from time import perf_counter
-from typing import Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from ..models.agent_trace import AgentRun, AgentStep, AgentStatus
 from ..services import trace_service
+
+logger = logging.getLogger("agentscope")
+
+# A phase's optional unit of work: a zero-arg callable, or a pre-computed value.
+Work = Optional[Callable[[], Any]]
 
 
 class TraceRecorder:
@@ -254,25 +260,32 @@ class TraceRecorder:
     ) -> AgentRun:
         """Start the top-level agent run for a request and make it active."""
         self._active_run = self.start_agent(agent_name, type=agent_type, metadata=metadata)
+        logger.info("Chatbot flow started: run=%s request_id=%s", self._active_run.id, self.request_id)
         return self._active_run
 
-    def planner(self, input=None, work=None, output=None, metadata=None):  # noqa: A002
+    def planner(
+        self,
+        input: Optional[str] = None,  # noqa: A002 - matches public SDK API
+        work: Work = None,
+        output: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace a planning step."""
         return self._phase("planner", "Planner", input=input, work=work, output=output, metadata=metadata)
 
     def memory_lookup(
         self,
-        query=None,
-        work=None,
-        memory_type="vector",
-        retrieved_text=None,
-        similarity_score=None,
-        used=None,
-        metadata=None,
-    ):
+        query: Optional[str] = None,
+        work: Work = None,
+        memory_type: str = "vector",
+        retrieved_text: Optional[str] = None,
+        similarity_score: Optional[float] = None,
+        used: Optional[bool] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace an (optional) memory lookup, recording a MemoryAccess."""
 
-        def record(step, result):
+        def record(step: AgentStep, result: Any) -> None:
             text, score, was_used = retrieved_text, similarity_score, used
             if isinstance(result, dict):
                 text = result.get("retrieved_text", text)
@@ -293,16 +306,16 @@ class TraceRecorder:
 
     def retriever(
         self,
-        query=None,
-        work=None,
-        documents=None,
-        embedding_time_ms=None,
-        retrieval_time_ms=None,
-        metadata=None,
-    ):
+        query: Optional[str] = None,
+        work: Work = None,
+        documents: Optional[list] = None,
+        embedding_time_ms: Optional[float] = None,
+        retrieval_time_ms: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace an (optional) retrieval, recording a RetrieverTrace."""
 
-        def record(step, result):
+        def record(step: AgentStep, result: Any) -> None:
             docs, emb, ret = documents, embedding_time_ms, retrieval_time_ms
             if isinstance(result, dict):
                 docs = result.get("documents", docs)
@@ -320,10 +333,17 @@ class TraceRecorder:
 
         return self._phase("retrieval", "Retriever", input=query, work=work, metadata=metadata, record=record)
 
-    def tool_call(self, tool_name, arguments=None, work=None, result=None, metadata=None):
+    def tool_call(
+        self,
+        tool_name: str,
+        arguments: Optional[dict] = None,
+        work: Work = None,
+        result: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace an (optional) tool call, recording a ToolExecution."""
 
-        def record(step, work_result):
+        def record(step: AgentStep, work_result: Any) -> None:
             value = result if result is not None else work_result
             self.record_tool(
                 step,
@@ -343,8 +363,14 @@ class TraceRecorder:
         )
 
     def llm_generation(
-        self, input=None, work=None, output=None, token_usage=None, cost=None, metadata=None  # noqa: A002
-    ):
+        self,
+        input: Optional[str] = None,  # noqa: A002 - matches public SDK API
+        work: Work = None,
+        output: Optional[str] = None,
+        token_usage: Optional[dict] = None,
+        cost: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace the main LLM generation step, capturing tokens and cost.
 
         If ``work`` returns a dict, ``response``/``text``/``output``,
@@ -373,7 +399,13 @@ class TraceRecorder:
         self.finish_step(step, output=resolved_output, token_usage=resolved_tokens, cost=resolved_cost)
         return result
 
-    def verifier(self, input=None, work=None, output=None, metadata=None):  # noqa: A002
+    def verifier(
+        self,
+        input: Optional[str] = None,  # noqa: A002 - matches public SDK API
+        work: Work = None,
+        output: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Any:
         """Trace a verification step."""
         return self._phase(
             "verification", "Verifier", input=input, work=work, output=output, metadata=metadata
@@ -413,6 +445,7 @@ class TraceRecorder:
                     fields["total_tokens"] = token_usage["total"]
             trace_service.update_trace(self.request_id, **fields)
 
+        logger.info("Chatbot flow finished: run=%s status=%s", run.id, status)
         self._active_run = None
         return run
 
@@ -424,7 +457,16 @@ class TraceRecorder:
             self.begin()
         return self._active_run
 
-    def _phase(self, step_type, name, input=None, work=None, output=None, metadata=None, record=None):  # noqa: A002
+    def _phase(
+        self,
+        step_type: str,
+        name: str,
+        input: Optional[str] = None,  # noqa: A002 - matches public SDK API
+        work: Work = None,
+        output: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        record: Optional[Callable[[AgentStep, Any], None]] = None,
+    ) -> Any:
         """Run one traced phase: add step, execute work, record, finish."""
         run = self._require_run()
         step = self.add_step(run, step_type=step_type, name=name, input=input, metadata=metadata)
@@ -440,7 +482,7 @@ class TraceRecorder:
         return result
 
     @staticmethod
-    def _stringify(value) -> Optional[str]:
+    def _stringify(value: Any) -> Optional[str]:
         """Coerce a value to a string for text columns (JSON for structures)."""
         if value is None or isinstance(value, str):
             return value

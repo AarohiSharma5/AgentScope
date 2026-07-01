@@ -23,12 +23,15 @@ and every phase is a one-line helper. The model, memory, retriever, tools and
 verifier are pluggable callables so this works with any provider; sensible
 in-process simulators are used by default so the flow is runnable with no keys.
 """
+import logging
 from time import perf_counter
 from typing import Callable, Optional
 
 from ..models.agent_trace import AgentStatus
 from ..utils.trace_recorder import TraceRecorder
 from . import trace_service
+
+logger = logging.getLogger("agentscope")
 
 
 def _default_model(payload: dict, context: Optional[dict] = None) -> dict:
@@ -168,6 +171,10 @@ def run_chat(
         token_usage=token_usage,
         cost=cost,
         latency_ms=latency_ms,
+    )
+
+    logger.info(
+        "Chat handled: request_id=%s run_id=%s latency_ms=%s", trace.id, run.id, latency_ms
     )
 
     # Return Response

@@ -22,6 +22,7 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 
 def serialize_tool(tool: ToolExecution) -> dict:
+    """Serialize a tool/function execution."""
     return {
         "id": tool.id,
         "step_id": tool.step_id,
@@ -36,6 +37,7 @@ def serialize_tool(tool: ToolExecution) -> dict:
 
 
 def serialize_memory(memory: MemoryAccess) -> dict:
+    """Serialize a memory read/lookup record."""
     return {
         "id": memory.id,
         "step_id": memory.step_id,
@@ -49,6 +51,7 @@ def serialize_memory(memory: MemoryAccess) -> dict:
 
 
 def serialize_retriever(retriever: RetrieverTrace) -> dict:
+    """Serialize a retrieval (RAG) trace record."""
     return {
         "id": retriever.id,
         "step_id": retriever.step_id,

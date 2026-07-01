@@ -8,7 +8,7 @@ import Card from "../components/ui/Card.jsx";
 import Field from "../components/ui/Field.jsx";
 import CodeBlock from "../components/ui/CodeBlock.jsx";
 import Section from "../components/ui/Section.jsx";
-import Loading from "../components/ui/Loading.jsx";
+import Skeleton from "../components/ui/Skeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -24,6 +24,21 @@ import RetrieverCard from "../components/agent/RetrieverCard.jsx";
 function CardList({ items, empty, render, className = "space-y-4" }) {
   if (!items || items.length === 0) return <EmptyState message={empty} />;
   return <div className={className}>{items.map(render)}</div>;
+}
+
+// Content-shaped placeholder shown while the run detail loads.
+function DetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-4 w-24" />
+      </div>
+      <Skeleton className="h-28 w-full" />
+      <Skeleton className="h-40 w-full" />
+      <Skeleton className="h-32 w-full" />
+    </div>
+  );
 }
 
 export default function AgentRunDetail() {
@@ -56,11 +71,15 @@ export default function AgentRunDetail() {
       </Link>
 
       {loading ? (
-        <Loading label="Loading agent run…" />
+        <DetailSkeleton />
       ) : error ? (
         <ErrorState message={`Failed to load this agent run: ${error}`} />
       ) : !run ? (
-        <EmptyState message="Agent run not found." />
+        <EmptyState
+          icon="?"
+          title="Agent run not found"
+          message="This run may have been deleted, or the id is incorrect."
+        />
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">

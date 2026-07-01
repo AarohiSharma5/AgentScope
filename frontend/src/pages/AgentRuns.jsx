@@ -3,7 +3,7 @@ import { api } from "../api/client.js";
 import AgentRunsTable from "../components/agent/AgentRunsTable.jsx";
 import SearchInput from "../components/SearchInput.jsx";
 import Pagination from "../components/Pagination.jsx";
-import Loading from "../components/ui/Loading.jsx";
+import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
 
@@ -92,15 +92,17 @@ export default function AgentRuns() {
       </div>
 
       {loading ? (
-        <Loading label="Loading agent runs…" />
+        <TableSkeleton columns={8} rows={8} />
       ) : error ? (
         <ErrorState message={`Failed to load agent runs: ${error}. Is the backend running?`} />
       ) : pagination.total === 0 ? (
         <EmptyState
+          icon={query ? "⌕" : "◇"}
+          title={query ? "No matching runs" : "No agent runs yet"}
           message={
             query
-              ? `No agent runs match “${query}”.`
-              : "No agent runs recorded yet. Instrument your agents with the TraceRecorder SDK to see them here."
+              ? `No agent runs match “${query}”. Try a different search.`
+              : "Instrument your agents with the TraceRecorder SDK (or hit POST /api/chat) to see runs appear here."
           }
         />
       ) : (
