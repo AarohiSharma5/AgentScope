@@ -46,6 +46,7 @@ class AgentOrchestrator:
         conversation_name: Optional[str] = None,
         context: Optional[dict] = None,
         metadata: Optional[dict] = None,
+        workflow_definition_id: Optional[int] = None,
         workflow_name: Optional[str] = None,
         workflow_version: Optional[str] = None,
         workflow_description: Optional[str] = None,
@@ -71,9 +72,18 @@ class AgentOrchestrator:
         )
 
         # Optional workflow definition + execution linked to this conversation.
+        # A caller may either point at an already-stored definition
+        # (``workflow_definition_id``, used by the workflow engine) or provide an
+        # inline spec (``workflow_name`` + ...) that gets persisted here.
         self.definition = None
         self.execution = None
-        if workflow_name is not None:
+        if workflow_definition_id is not None:
+            self.execution = workflow_service.create_workflow_execution(
+                workflow_definition_id=workflow_definition_id,
+                conversation_run_id=self.conversation.id,
+                status=AgentStatus.RUNNING,
+            )
+        elif workflow_name is not None:
             self.definition = workflow_service.create_workflow_definition(
                 workflow_name=workflow_name,
                 description=workflow_description,

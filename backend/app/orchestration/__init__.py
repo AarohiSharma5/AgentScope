@@ -17,7 +17,26 @@ orchestrates.
 """
 from .agent import Agent
 from .context import AgentContext
+from .engine import (
+    CancellationToken,
+    WorkflowEngine,
+    WorkflowError,
+    WorkflowResult,
+    WorkflowValidationError,
+    validate_workflow,
+)
 from .orchestrator import AgentOrchestrator
 from .registry import AgentRegistry
 
-__all__ = ["AgentOrchestrator", "Agent", "AgentContext", "AgentRegistry"]
+__all__ = [
+    "AgentOrchestrator",
+    "Agent",
+    "AgentContext",
+    "AgentRegistry",
+    "WorkflowEngine",
+    "WorkflowResult",
+    "WorkflowError",
+    "WorkflowValidationError",
+    "CancellationToken",
+    "validate_workflow",
+]

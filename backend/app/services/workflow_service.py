@@ -183,6 +183,11 @@ def create_workflow_definition(
     return definition
 
 
+def get_workflow_definition(definition_id: int) -> Optional[WorkflowDefinition]:
+    """Return a workflow definition by id, or None."""
+    return db.session.get(WorkflowDefinition, definition_id)
+
+
 def create_workflow_execution(
     workflow_definition_id: int,
     conversation_run_id: Optional[int] = None,
