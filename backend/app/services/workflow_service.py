@@ -8,8 +8,11 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import String, asc, cast, desc, func, or_
+from sqlalchemy.orm import selectinload
+
 from ..extensions import db
-from ..models.agent_trace import AgentStatus
+from ..models.agent_trace import AgentRun, AgentStatus, AgentStep
 from ..models.workflow_trace import (
     AgentMessage,
     AgentNode,
@@ -236,3 +239,190 @@ def finish_workflow_execution(
         execution.id, status, execution.latency_ms,
     )
     return execution
+
+
+# -- Read / query layer (v0.4 REST API) -------------------------------------
+
+WORKFLOW_SORTABLE = {"created_at", "updated_at", "workflow_name", "version"}
+_WORKFLOW_SORT_COLUMNS = {name: getattr(WorkflowDefinition, name) for name in WORKFLOW_SORTABLE}
+
+CONVERSATION_SORTABLE = {
+    "created_at",
+    "started_at",
+    "finished_at",
+    "latency_ms",
+    "status",
+    "conversation_name",
+}
+_CONVERSATION_SORT_COLUMNS = {
+    name: getattr(ConversationRun, name) for name in CONVERSATION_SORTABLE
+}
+
+
+def _is_valid_sort(sort: str, allowed: set) -> bool:
+    if not sort:
+        return False
+    field = sort[1:] if sort.startswith("-") else sort
+    return field in allowed
+
+
+def _apply_sort(query, sort: str, columns: dict):
+    descending = sort.startswith("-")
+    field = sort[1:] if descending else sort
+    column = columns[field]
+    return query.order_by(desc(column) if descending else asc(column))
+
+
+def is_valid_workflow_sort(sort: str) -> bool:
+    """Return True if ``sort`` targets an allowed workflow field."""
+    return _is_valid_sort(sort, WORKFLOW_SORTABLE)
+
+
+def is_valid_conversation_sort(sort: str) -> bool:
+    """Return True if ``sort`` targets an allowed conversation field."""
+    return _is_valid_sort(sort, CONVERSATION_SORTABLE)
+
+
+def list_workflows(
+    page: int = 1,
+    limit: int = 20,
+    q: Optional[str] = None,
+    sort: str = "-created_at",
+) -> tuple[list[WorkflowDefinition], int]:
+    """Return a page of workflow definitions and the total matching count."""
+    query = WorkflowDefinition.query.options(selectinload(WorkflowDefinition.executions))
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                WorkflowDefinition.workflow_name.ilike(like),
+                WorkflowDefinition.description.ilike(like),
+                WorkflowDefinition.version.ilike(like),
+                cast(WorkflowDefinition.id, String).ilike(like),
+            )
+        )
+    total = query.count()
+    query = _apply_sort(query, sort, _WORKFLOW_SORT_COLUMNS)
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
+
+
+def get_workflow(definition_id: int) -> Optional[WorkflowDefinition]:
+    """Return a workflow definition with its execution history, or None."""
+    return (
+        db.session.query(WorkflowDefinition)
+        .options(selectinload(WorkflowDefinition.executions))
+        .filter(WorkflowDefinition.id == definition_id)
+        .one_or_none()
+    )
+
+
+def list_conversations(
+    page: int = 1,
+    limit: int = 20,
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    sort: str = "-created_at",
+) -> tuple[list[ConversationRun], int]:
+    """Return a page of conversation runs and the total matching count."""
+    query = ConversationRun.query.options(
+        selectinload(ConversationRun.nodes),
+        selectinload(ConversationRun.messages),
+    )
+    if status is not None:
+        query = query.filter(ConversationRun.status == status)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                ConversationRun.conversation_name.ilike(like),
+                ConversationRun.status.ilike(like),
+                cast(ConversationRun.id, String).ilike(like),
+                cast(ConversationRun.request_trace_id, String).ilike(like),
+            )
+        )
+    total = query.count()
+    query = _apply_sort(query, sort, _CONVERSATION_SORT_COLUMNS)
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
+
+
+def get_conversation(conversation_id: int) -> Optional[ConversationRun]:
+    """Return a conversation eager-loaded with its agent tree, runs/steps and messages."""
+    return (
+        db.session.query(ConversationRun)
+        .options(
+            selectinload(ConversationRun.nodes)
+            .selectinload(AgentNode.agent_run)
+            .selectinload(AgentRun.steps),
+            selectinload(ConversationRun.messages).selectinload(AgentMessage.sender),
+            selectinload(ConversationRun.messages).selectinload(AgentMessage.receiver),
+            selectinload(ConversationRun.workflow_execution),
+        )
+        .filter(ConversationRun.id == conversation_id)
+        .one_or_none()
+    )
+
+
+def get_workflow_metrics() -> dict:
+    """Compute aggregate multi-agent workflow metrics for the dashboard.
+
+    The unit of a "workflow" here is a :class:`ConversationRun` (one run of a
+    multi-agent workflow). ``total_agents`` counts agent nodes; cost is summed
+    from the underlying agent-run steps.
+    """
+    total_workflows = db.session.query(func.count(ConversationRun.id)).scalar() or 0
+    total_agents = db.session.query(func.count(AgentNode.id)).scalar() or 0
+
+    if total_workflows == 0:
+        return {
+            "total_workflows": 0,
+            "total_agents": total_agents,
+            "average_agents_per_workflow": 0,
+            "average_messages": 0,
+            "average_parallel_branches": 0,
+            "average_latency": 0,
+            "average_cost": 0,
+            "success_rate": 0,
+        }
+
+    total_messages = db.session.query(func.count(AgentMessage.id)).scalar() or 0
+
+    # Parallel branches: average size of a parallel group (nodes sharing one
+    # non-null parallel_group), i.e. total grouped nodes / distinct groups.
+    grouped_nodes = (
+        db.session.query(func.count(AgentNode.id))
+        .filter(AgentNode.parallel_group.isnot(None))
+        .scalar()
+        or 0
+    )
+    distinct_groups = (
+        db.session.query(func.count(func.distinct(AgentNode.parallel_group)))
+        .filter(AgentNode.parallel_group.isnot(None))
+        .scalar()
+        or 0
+    )
+
+    avg_latency = db.session.query(func.avg(ConversationRun.latency_ms)).scalar() or 0
+    total_cost = (
+        db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0)).scalar() or 0
+    )
+    success_workflows = (
+        db.session.query(func.count(ConversationRun.id))
+        .filter(ConversationRun.status == AgentStatus.SUCCESS)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "total_workflows": total_workflows,
+        "total_agents": total_agents,
+        "average_agents_per_workflow": round(total_agents / total_workflows, 2),
+        "average_messages": round(total_messages / total_workflows, 2),
+        "average_parallel_branches": (
+            round(grouped_nodes / distinct_groups, 2) if distinct_groups else 0
+        ),
+        "average_latency": round(float(avg_latency), 2),
+        "average_cost": round(float(total_cost) / total_workflows, 6),
+        "success_rate": round(success_workflows / total_workflows * 100, 2),
+    }
