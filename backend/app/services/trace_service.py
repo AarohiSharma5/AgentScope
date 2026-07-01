@@ -23,7 +23,9 @@ from ..models.agent_trace import (
     MemoryAccess,
     RetrieverTrace,
 )
+from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
 from ..utils.timeutils import utcnow
+from ..utils.tokens import estimate_tokens
 from ..utils.validation import ensure_json_array, ensure_json_object
 
 logger = logging.getLogger("agentscope")
@@ -469,3 +471,220 @@ def get_agent_metrics() -> dict:
         "average_cost": round(float(total_cost) / total_runs, 6),
         "success_rate": round(success_runs / total_runs * 100, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# RAG / prompt-assembly tracing (v0.3)
+#
+# Persistence + business logic (token counting, cost estimation, reranking) for
+# the v0.3 models. The TraceRecorder SDK only orchestrates and calls into here.
+# ---------------------------------------------------------------------------
+
+# Embedding price table (USD per 1K input tokens). Extend per provider.
+_EMBEDDING_PRICE_PER_1K = {
+    "text-embedding-3-small": 0.00002,
+    "text-embedding-3-large": 0.00013,
+    "text-embedding-ada-002": 0.0001,
+}
+
+
+def estimate_embedding_cost(model: Optional[str], input_tokens: Optional[int]) -> Optional[float]:
+    """Estimate embedding cost in USD, or None if the model/tokens are unknown."""
+    if not model or input_tokens is None:
+        return None
+    price = _EMBEDDING_PRICE_PER_1K.get(model)
+    if price is None:
+        return None
+    return round(input_tokens / 1000 * price, 8)
+
+
+def create_embedding_trace(
+    retriever_trace_id: int,
+    embedding_model: Optional[str] = None,
+    embedding_dimension: Optional[int] = None,
+    input_tokens: Optional[int] = None,
+    input_text: Optional[str] = None,
+    latency_ms: Optional[float] = None,
+    cost: Optional[float] = None,
+    metadata: Optional[dict] = None,
+) -> EmbeddingTrace:
+    """Persist an embedding call for a retriever trace.
+
+    Token count is derived from ``input_text`` when ``input_tokens`` is omitted,
+    and cost is estimated from the model + tokens when not supplied.
+    """
+    if input_tokens is None and input_text is not None:
+        input_tokens = estimate_tokens(input_text)
+    if cost is None:
+        cost = estimate_embedding_cost(embedding_model, input_tokens)
+
+    embedding = EmbeddingTrace(
+        retriever_trace_id=retriever_trace_id,
+        embedding_model=embedding_model,
+        embedding_dimension=embedding_dimension,
+        input_tokens=input_tokens,
+        latency_ms=latency_ms,
+        cost=cost,
+        embedding_metadata=ensure_json_object(metadata, "metadata"),
+    )
+    db.session.add(embedding)
+    db.session.commit()
+    logger.debug(
+        "Recorded embedding id=%s trace_id=%s model=%s tokens=%s",
+        embedding.id, retriever_trace_id, embedding_model, input_tokens,
+    )
+    return embedding
+
+
+def create_retrieved_document(
+    retriever_trace_id: int,
+    document_id: Optional[str] = None,
+    document_name: Optional[str] = None,
+    document_source: Optional[str] = None,
+    chunk_index: Optional[int] = None,
+    chunk_text: Optional[str] = None,
+    similarity_score: Optional[float] = None,
+    selected: bool = False,
+    metadata: Optional[dict] = None,
+) -> RetrievedDocument:
+    """Persist a single retrieved document/chunk for a retriever trace."""
+    document = RetrievedDocument(
+        retriever_trace_id=retriever_trace_id,
+        document_id=document_id,
+        document_name=document_name,
+        document_source=document_source,
+        chunk_index=chunk_index,
+        chunk_text=chunk_text,
+        similarity_score=similarity_score,
+        selected=bool(selected),
+        doc_metadata=ensure_json_object(metadata, "metadata"),
+    )
+    db.session.add(document)
+    db.session.commit()
+    return document
+
+
+def update_retrieved_document(
+    document_id: int,
+    similarity_score: Optional[float] = None,
+    selected: Optional[bool] = None,
+    metadata: Optional[dict] = None,
+) -> Optional[RetrievedDocument]:
+    """Update a retrieved document's score/selection (used for similarity/rerank)."""
+    document = db.session.get(RetrievedDocument, document_id)
+    if document is None:
+        return None
+    if similarity_score is not None:
+        document.similarity_score = similarity_score
+    if selected is not None:
+        document.selected = bool(selected)
+    if metadata is not None:
+        document.doc_metadata = ensure_json_object(metadata, "metadata")
+    db.session.commit()
+    return document
+
+
+def create_prompt_assembly(
+    agent_run_id: int,
+    system_prompt: Optional[str] = None,
+    conversation_context: Optional[str] = None,
+    retrieved_context: Optional[str] = None,
+    memory_context: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    assembled_prompt: Optional[str] = None,
+    system_tokens: Optional[int] = None,
+    conversation_tokens: Optional[int] = None,
+    retrieval_tokens: Optional[int] = None,
+    memory_tokens: Optional[int] = None,
+    user_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+) -> PromptAssembly:
+    """Persist a prompt assembly for an agent run.
+
+    Per-source token counts are derived from their text when not provided, the
+    total is summed when omitted, and ``assembled_prompt`` defaults to the
+    non-empty context sources joined in order.
+    """
+    sources = [
+        ("system", system_prompt, system_tokens),
+        ("conversation", conversation_context, conversation_tokens),
+        ("retrieved", retrieved_context, retrieval_tokens),
+        ("memory", memory_context, memory_tokens),
+        ("user", user_prompt, user_tokens),
+    ]
+    counts = {
+        name: (tokens if tokens is not None else estimate_tokens(text))
+        for name, text, tokens in sources
+    }
+    if total_tokens is None:
+        total_tokens = sum(counts.values())
+    if assembled_prompt is None:
+        assembled_prompt = "\n\n".join(text for _, text, _ in sources if text)
+
+    assembly = PromptAssembly(
+        agent_run_id=agent_run_id,
+        system_prompt=system_prompt,
+        conversation_context=conversation_context,
+        retrieved_context=retrieved_context,
+        memory_context=memory_context,
+        user_prompt=user_prompt,
+        assembled_prompt=assembled_prompt,
+        system_tokens=counts["system"],
+        conversation_tokens=counts["conversation"],
+        retrieval_tokens=counts["retrieved"],
+        memory_tokens=counts["memory"],
+        user_tokens=counts["user"],
+        total_tokens=total_tokens,
+    )
+    db.session.add(assembly)
+    db.session.commit()
+    logger.debug(
+        "Recorded prompt assembly id=%s run_id=%s total_tokens=%s",
+        assembly.id, agent_run_id, total_tokens,
+    )
+    return assembly
+
+
+def apply_reranking(
+    retriever_trace_id: int,
+    ranking: Optional[list] = None,
+    top_k: Optional[int] = None,
+) -> list[RetrievedDocument]:
+    """Apply reranking results to a retriever trace's documents.
+
+    ``ranking`` is an optional list of dicts identifying documents (by
+    ``document_id`` or ``chunk_index``) with a new ``score`` and/or ``selected``
+    flag. When ``top_k`` is given, documents are ordered by score (descending)
+    and only the top ``k`` are marked ``selected``. Returns the documents in
+    (reranked) score order.
+    """
+    documents = (
+        RetrievedDocument.query.filter_by(retriever_trace_id=retriever_trace_id).all()
+    )
+    by_doc_id = {d.document_id: d for d in documents if d.document_id is not None}
+    by_chunk = {d.chunk_index: d for d in documents if d.chunk_index is not None}
+
+    for item in ranking or []:
+        target = None
+        if item.get("document_id") is not None:
+            target = by_doc_id.get(item["document_id"])
+        elif item.get("chunk_index") is not None:
+            target = by_chunk.get(item["chunk_index"])
+        if target is None:
+            continue
+        if item.get("score") is not None:
+            target.similarity_score = item["score"]
+        if item.get("selected") is not None:
+            target.selected = bool(item["selected"])
+
+    ordered = sorted(
+        documents,
+        key=lambda d: (d.similarity_score if d.similarity_score is not None else float("-inf")),
+        reverse=True,
+    )
+    if top_k is not None:
+        for position, document in enumerate(ordered):
+            document.selected = position < top_k
+
+    db.session.commit()
+    return ordered

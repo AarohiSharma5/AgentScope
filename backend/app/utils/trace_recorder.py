@@ -37,7 +37,8 @@ from contextlib import contextmanager
 from time import perf_counter
 from typing import Any, Callable, Optional, Union
 
-from ..models.agent_trace import AgentRun, AgentStep, AgentStatus
+from ..models.agent_trace import AgentRun, AgentStep, AgentStatus, RetrieverTrace
+from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
 from ..services import trace_service
 
 logger = logging.getLogger("agentscope")
@@ -57,6 +58,8 @@ class TraceRecorder:
         self._step_started: dict[int, float] = {}
         # Per-run auto-incrementing step counter.
         self._step_counter: dict[int, int] = {}
+        # Per-retriever-trace auto-incrementing chunk counter (v0.3).
+        self._chunk_counter: dict[int, int] = {}
         # The run currently driven by the high-level chatbot-flow helpers.
         self._active_run: Optional[AgentRun] = None
 
@@ -203,6 +206,210 @@ class TraceRecorder:
             embedding_time_ms=embedding_time_ms,
             retrieval_time_ms=retrieval_time_ms,
             num_documents=num_documents,
+        )
+
+    # -- v0.3 RAG / prompt-assembly sub-records ----------------------------
+    #
+    # These orchestrate only: they time optional ``work`` callables, extract
+    # results and delegate all persistence, token counting and cost estimation
+    # to the service layer. ``retriever_trace``/``run`` accept an ORM object or
+    # a raw id, and ``run`` defaults to the active run for nested use.
+
+    def record_embedding(
+        self,
+        retriever_trace: Union[RetrieverTrace, int],
+        embedding_model: Optional[str] = None,
+        input: Optional[str] = None,  # noqa: A002 - text embedded, for token counting
+        input_tokens: Optional[int] = None,
+        embedding_dimension: Optional[int] = None,
+        work: Work = None,
+        cost: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> EmbeddingTrace:
+        """Record the embedding call backing a retriever trace.
+
+        Latency is measured around ``work`` (the embed call). If ``work`` returns
+        the vector (or a dict with ``embedding``/``dimension``/``input_tokens``/
+        ``cost``), those values are extracted. Token count and cost are estimated
+        by the service when not supplied. On failure the embedding is still
+        recorded with error metadata and the exception re-raised.
+        """
+        rt_id = self._row_id(retriever_trace)
+        started = perf_counter()
+        result = None
+        try:
+            if callable(work):
+                result = work()
+        except Exception as exc:  # noqa: BLE001 - record then re-raise
+            trace_service.create_embedding_trace(
+                rt_id,
+                embedding_model=embedding_model,
+                embedding_dimension=embedding_dimension,
+                input_tokens=input_tokens,
+                input_text=input,
+                latency_ms=self._elapsed_ms(started),
+                cost=cost,
+                metadata=self._error_meta(metadata, exc),
+            )
+            raise
+
+        latency_ms = self._elapsed_ms(started) if callable(work) else None
+        if isinstance(result, dict):
+            embedding_dimension = embedding_dimension or result.get("embedding_dimension") or result.get("dimension")
+            input_tokens = input_tokens if input_tokens is not None else result.get("input_tokens")
+            cost = cost if cost is not None else result.get("cost")
+            vector = result.get("embedding") or result.get("vector")
+            if vector is not None and embedding_dimension is None:
+                embedding_dimension = len(vector)
+        elif isinstance(result, (list, tuple)) and embedding_dimension is None:
+            embedding_dimension = len(result)
+
+        return trace_service.create_embedding_trace(
+            rt_id,
+            embedding_model=embedding_model,
+            embedding_dimension=embedding_dimension,
+            input_tokens=input_tokens,
+            input_text=input,
+            latency_ms=latency_ms,
+            cost=cost,
+            metadata=metadata,
+        )
+
+    def record_retrieved_document(
+        self,
+        retriever_trace: Union[RetrieverTrace, int],
+        document_id: Optional[str] = None,
+        document_name: Optional[str] = None,
+        document_source: Optional[str] = None,
+        chunk_index: Optional[int] = None,
+        chunk_text: Optional[str] = None,
+        similarity_score: Optional[float] = None,
+        selected: bool = False,
+        metadata: Optional[dict] = None,
+    ) -> RetrievedDocument:
+        """Record a single document/chunk returned by a retriever trace."""
+        return trace_service.create_retrieved_document(
+            self._row_id(retriever_trace),
+            document_id=document_id,
+            document_name=document_name,
+            document_source=document_source,
+            chunk_index=chunk_index,
+            chunk_text=chunk_text,
+            similarity_score=similarity_score,
+            selected=selected,
+            metadata=metadata,
+        )
+
+    def record_chunk(
+        self,
+        retriever_trace: Union[RetrieverTrace, int],
+        chunk_text: Optional[str] = None,
+        chunk_index: Optional[int] = None,
+        similarity_score: Optional[float] = None,
+        document_id: Optional[str] = None,
+        document_name: Optional[str] = None,
+        document_source: Optional[str] = None,
+        selected: bool = False,
+        metadata: Optional[dict] = None,
+    ) -> RetrievedDocument:
+        """Record a retrieved chunk, auto-numbering ``chunk_index`` per trace."""
+        rt_id = self._row_id(retriever_trace)
+        if chunk_index is None:
+            chunk_index = self._chunk_counter.get(rt_id, 0)
+            self._chunk_counter[rt_id] = chunk_index + 1
+        return trace_service.create_retrieved_document(
+            rt_id,
+            document_id=document_id,
+            document_name=document_name,
+            document_source=document_source,
+            chunk_index=chunk_index,
+            chunk_text=chunk_text,
+            similarity_score=similarity_score,
+            selected=selected,
+            metadata=metadata,
+        )
+
+    def record_similarity(
+        self,
+        document: Union[RetrievedDocument, int],
+        similarity_score: float,
+        selected: Optional[bool] = None,
+        metadata: Optional[dict] = None,
+    ) -> Optional[RetrievedDocument]:
+        """Attach/update a similarity score (and selection) on a retrieved document."""
+        return trace_service.update_retrieved_document(
+            self._row_id(document),
+            similarity_score=similarity_score,
+            selected=selected,
+            metadata=metadata,
+        )
+
+    def record_reranking(
+        self,
+        retriever_trace: Union[RetrieverTrace, int],
+        ranking: Optional[list] = None,
+        work: Work = None,
+        top_k: Optional[int] = None,
+        metadata: Optional[dict] = None,
+    ) -> list:
+        """Record a reranking pass over a retriever trace's documents.
+
+        ``work`` (the reranker) is timed automatically and may return the
+        ``ranking`` list itself. Each ranking entry identifies a document (by
+        ``document_id`` or ``chunk_index``) with a new ``score``/``selected``;
+        ``top_k`` marks the top-scoring documents as selected. Returns the
+        documents in reranked order.
+        """
+        rt_id = self._row_id(retriever_trace)
+        started = perf_counter()
+        try:
+            if callable(work):
+                ranking = work()
+        except Exception:  # noqa: BLE001 - nothing persisted yet; propagate
+            raise
+        documents = trace_service.apply_reranking(rt_id, ranking=ranking, top_k=top_k)
+        logger.debug(
+            "Reranked %s documents for trace_id=%s in %.2f ms",
+            len(documents), rt_id, self._elapsed_ms(started) or 0.0,
+        )
+        return documents
+
+    def record_prompt_assembly(
+        self,
+        run: Optional[Union[AgentRun, int]] = None,
+        system_prompt: Optional[str] = None,
+        conversation_context: Optional[str] = None,
+        retrieved_context: Optional[str] = None,
+        memory_context: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+        assembled_prompt: Optional[str] = None,
+        system_tokens: Optional[int] = None,
+        conversation_tokens: Optional[int] = None,
+        retrieval_tokens: Optional[int] = None,
+        memory_tokens: Optional[int] = None,
+        user_tokens: Optional[int] = None,
+        total_tokens: Optional[int] = None,
+    ) -> PromptAssembly:
+        """Record how an agent run assembled its final prompt.
+
+        Defaults ``run`` to the active run, and lets the service derive per-source
+        token counts, the total and the assembled prompt when not provided.
+        """
+        run_id = self._row_id(run) if run is not None else self._require_run().id
+        return trace_service.create_prompt_assembly(
+            run_id,
+            system_prompt=system_prompt,
+            conversation_context=conversation_context,
+            retrieved_context=retrieved_context,
+            memory_context=memory_context,
+            user_prompt=user_prompt,
+            assembled_prompt=assembled_prompt,
+            system_tokens=system_tokens,
+            conversation_tokens=conversation_tokens,
+            retrieval_tokens=retrieval_tokens,
+            memory_tokens=memory_tokens,
+            user_tokens=user_tokens,
+            total_tokens=total_tokens,
         )
 
     # -- Exception-safe context managers -----------------------------------
@@ -499,6 +706,11 @@ class TraceRecorder:
         if ref is None:
             return None
         return ref.id if isinstance(ref, AgentRun) else ref
+
+    @staticmethod
+    def _row_id(ref: Union[object, int]) -> int:
+        """Accept either an ORM row or a raw id and return the id."""
+        return ref.id if hasattr(ref, "id") else ref
 
     @staticmethod
     def _elapsed_ms(started: Optional[float]) -> Optional[float]:
