@@ -16,7 +16,7 @@ from ..errors import error_response
 from ..models.agent_trace import AgentStatus
 from ..serializers.agent import serialize_run_detail, serialize_run_summary
 from ..services import trace_service
-from ..utils.pagination import paginated
+from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 agent_traces_bp = Blueprint("agent_traces", __name__)
 
@@ -27,22 +27,14 @@ _ALLOWED_STATUS = {
     AgentStatus.FAILED,
 }
 
-_DEFAULT_LIMIT = 20
-_MAX_LIMIT = 100
-
 
 @agent_traces_bp.get("/agent-runs")
 def list_agent_runs():
     """List agent runs with pagination, filtering, search and sorting."""
     try:
-        page = int(request.args.get("page", 1))
-        limit = int(request.args.get("limit", _DEFAULT_LIMIT))
-    except (TypeError, ValueError):
-        return error_response("page and limit must be integers", 400)
-    if page < 1:
-        return error_response("page must be >= 1", 400)
-    if not (1 <= limit <= _MAX_LIMIT):
-        return error_response(f"limit must be between 1 and {_MAX_LIMIT}", 400)
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
 
     status = request.args.get("status")
     if status is not None and status not in _ALLOWED_STATUS:

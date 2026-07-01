@@ -67,6 +67,16 @@ def test_list_workflows_search_and_bad_sort(client, seeded):
     assert client.get("/api/workflows?page=0").status_code == 400
 
 
+def test_pagination_validation_is_consistent(client, seeded):
+    """Shared parse_page_limit rejects bad page/limit uniformly across endpoints."""
+    for path in ("/api/workflows", "/api/conversations", "/api/messages"):
+        assert client.get(f"{path}?page=0").status_code == 400
+        assert client.get(f"{path}?limit=0").status_code == 400
+        assert client.get(f"{path}?limit=99999").status_code == 400
+        assert client.get(f"{path}?page=notint").status_code == 400
+        assert client.get(f"{path}?page=1&limit=5").status_code == 200
+
+
 def test_workflow_detail(client, seeded):
     resp = client.get(f"/api/workflows/{seeded['definition_id']}")
     assert resp.status_code == 200

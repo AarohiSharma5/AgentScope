@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, asc, cast, desc, func, or_
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import selectinload
 
 from ..extensions import db
@@ -20,6 +20,7 @@ from ..models.workflow_trace import (
     WorkflowDefinition,
     WorkflowExecution,
 )
+from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.validation import ensure_json_object
 
@@ -259,28 +260,14 @@ _CONVERSATION_SORT_COLUMNS = {
 }
 
 
-def _is_valid_sort(sort: str, allowed: set) -> bool:
-    if not sort:
-        return False
-    field = sort[1:] if sort.startswith("-") else sort
-    return field in allowed
-
-
-def _apply_sort(query, sort: str, columns: dict):
-    descending = sort.startswith("-")
-    field = sort[1:] if descending else sort
-    column = columns[field]
-    return query.order_by(desc(column) if descending else asc(column))
-
-
 def is_valid_workflow_sort(sort: str) -> bool:
     """Return True if ``sort`` targets an allowed workflow field."""
-    return _is_valid_sort(sort, WORKFLOW_SORTABLE)
+    return is_valid_sort(sort, WORKFLOW_SORTABLE)
 
 
 def is_valid_conversation_sort(sort: str) -> bool:
     """Return True if ``sort`` targets an allowed conversation field."""
-    return _is_valid_sort(sort, CONVERSATION_SORTABLE)
+    return is_valid_sort(sort, CONVERSATION_SORTABLE)
 
 
 def list_workflows(
@@ -302,7 +289,7 @@ def list_workflows(
             )
         )
     total = query.count()
-    query = _apply_sort(query, sort, _WORKFLOW_SORT_COLUMNS)
+    query = apply_sort(query, sort, _WORKFLOW_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
     return items, total
 
@@ -342,7 +329,7 @@ def list_conversations(
             )
         )
     total = query.count()
-    query = _apply_sort(query, sort, _CONVERSATION_SORT_COLUMNS)
+    query = apply_sort(query, sort, _CONVERSATION_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
     return items, total
 
