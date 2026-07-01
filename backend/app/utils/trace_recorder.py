@@ -31,6 +31,7 @@ For exception-safe scoping, prefer the context managers::
         with trace.step(run, step_type="reasoning", name="Think") as step:
             ...  # a raised exception marks step & run as failed automatically
 """
+import json
 from contextlib import contextmanager
 from time import perf_counter
 from typing import Optional, Union
@@ -50,6 +51,8 @@ class TraceRecorder:
         self._step_started: dict[int, float] = {}
         # Per-run auto-incrementing step counter.
         self._step_counter: dict[int, int] = {}
+        # The run currently driven by the high-level chatbot-flow helpers.
+        self._active_run: Optional[AgentRun] = None
 
     # -- Agent runs ---------------------------------------------------------
 
@@ -235,7 +238,218 @@ class TraceRecorder:
         else:
             self.finish_step(step, status=AgentStatus.SUCCESS)
 
+    # -- High-level chatbot-flow helpers ------------------------------------
+    #
+    # These build on the low-level API above so an integration only needs a
+    # ``TraceRecorder(request_id)`` plus one-line phase calls. Run/step
+    # lifecycle, timing, status and persistence are handled automatically.
+    # Each phase optionally accepts a ``work`` callable; if the work raises,
+    # the step is marked failed and the exception re-raised.
+
+    def begin(
+        self,
+        agent_name: str = "Chatbot",
+        agent_type: str = "chatbot",
+        metadata: Optional[dict] = None,
+    ) -> AgentRun:
+        """Start the top-level agent run for a request and make it active."""
+        self._active_run = self.start_agent(agent_name, type=agent_type, metadata=metadata)
+        return self._active_run
+
+    def planner(self, input=None, work=None, output=None, metadata=None):  # noqa: A002
+        """Trace a planning step."""
+        return self._phase("planner", "Planner", input=input, work=work, output=output, metadata=metadata)
+
+    def memory_lookup(
+        self,
+        query=None,
+        work=None,
+        memory_type="vector",
+        retrieved_text=None,
+        similarity_score=None,
+        used=None,
+        metadata=None,
+    ):
+        """Trace an (optional) memory lookup, recording a MemoryAccess."""
+
+        def record(step, result):
+            text, score, was_used = retrieved_text, similarity_score, used
+            if isinstance(result, dict):
+                text = result.get("retrieved_text", text)
+                score = result.get("similarity_score", score)
+                was_used = result.get("used", was_used)
+            elif isinstance(result, str) and text is None:
+                text = result
+            self.record_memory(
+                step,
+                memory_type=memory_type,
+                query=query,
+                retrieved_text=text,
+                similarity_score=score,
+                used=was_used,
+            )
+
+        return self._phase("memory", "Memory Lookup", input=query, work=work, metadata=metadata, record=record)
+
+    def retriever(
+        self,
+        query=None,
+        work=None,
+        documents=None,
+        embedding_time_ms=None,
+        retrieval_time_ms=None,
+        metadata=None,
+    ):
+        """Trace an (optional) retrieval, recording a RetrieverTrace."""
+
+        def record(step, result):
+            docs, emb, ret = documents, embedding_time_ms, retrieval_time_ms
+            if isinstance(result, dict):
+                docs = result.get("documents", docs)
+                emb = result.get("embedding_time_ms", emb)
+                ret = result.get("retrieval_time_ms", ret)
+            elif isinstance(result, list) and docs is None:
+                docs = result
+            self.record_retriever(
+                step,
+                query=query,
+                retrieved_documents=docs,
+                embedding_time_ms=emb,
+                retrieval_time_ms=ret,
+            )
+
+        return self._phase("retrieval", "Retriever", input=query, work=work, metadata=metadata, record=record)
+
+    def tool_call(self, tool_name, arguments=None, work=None, result=None, metadata=None):
+        """Trace an (optional) tool call, recording a ToolExecution."""
+
+        def record(step, work_result):
+            value = result if result is not None else work_result
+            self.record_tool(
+                step,
+                tool_name=tool_name,
+                arguments=arguments,
+                result=self._stringify(value),
+                status=AgentStatus.SUCCESS,
+            )
+
+        return self._phase(
+            "tool",
+            f"Tool: {tool_name}",
+            input=self._stringify(arguments),
+            work=work,
+            metadata=metadata,
+            record=record,
+        )
+
+    def llm_generation(
+        self, input=None, work=None, output=None, token_usage=None, cost=None, metadata=None  # noqa: A002
+    ):
+        """Trace the main LLM generation step, capturing tokens and cost.
+
+        If ``work`` returns a dict, ``response``/``text``/``output``,
+        ``token_usage`` (or ``input_tokens``/``output_tokens``) and ``cost`` are
+        read from it automatically.
+        """
+        run = self._require_run()
+        step = self.add_step(run, step_type="llm", name="LLM Generation", input=input, metadata=metadata)
+        try:
+            result = work() if callable(work) else work
+        except Exception as exc:  # noqa: BLE001 - record then re-raise
+            self.finish_step(step, status=AgentStatus.FAILED, metadata=self._error_meta(metadata, exc))
+            raise
+
+        resolved_output, resolved_tokens, resolved_cost = output, token_usage, cost
+        if isinstance(result, dict):
+            resolved_output = resolved_output or result.get("response") or result.get("text") or result.get("output")
+            resolved_tokens = resolved_tokens or result.get("token_usage")
+            if resolved_tokens is None and ("input_tokens" in result or "output_tokens" in result):
+                it, ot = result.get("input_tokens"), result.get("output_tokens")
+                resolved_tokens = {"input": it, "output": ot, "total": (it or 0) + (ot or 0)}
+            resolved_cost = resolved_cost if resolved_cost is not None else result.get("cost")
+        elif isinstance(result, str) and resolved_output is None:
+            resolved_output = result
+
+        self.finish_step(step, output=resolved_output, token_usage=resolved_tokens, cost=resolved_cost)
+        return result
+
+    def verifier(self, input=None, work=None, output=None, metadata=None):  # noqa: A002
+        """Trace a verification step."""
+        return self._phase(
+            "verification", "Verifier", input=input, work=work, output=output, metadata=metadata
+        )
+
+    def complete(
+        self,
+        status: str = AgentStatus.SUCCESS,
+        final_response: Optional[str] = None,
+        token_usage: Optional[dict] = None,
+        cost: Optional[float] = None,
+        latency_ms: Optional[float] = None,
+        metadata: Optional[dict] = None,
+        update_request: bool = True,
+    ) -> AgentRun:
+        """Finish the active run and (optionally) store the final response on the
+        parent request Trace, keeping the v0.1 fields populated."""
+        run = self._require_run()
+        self.finish_agent(run, status=status, metadata=metadata)
+
+        if update_request:
+            fields: dict = {
+                "status": "success" if status == AgentStatus.SUCCESS else "failed",
+            }
+            if final_response is not None:
+                fields["final_response"] = final_response
+            if cost is not None:
+                fields["estimated_cost"] = cost
+            if latency_ms is not None:
+                fields["latency_ms"] = latency_ms
+            if isinstance(token_usage, dict):
+                if token_usage.get("input") is not None:
+                    fields["input_tokens"] = token_usage["input"]
+                if token_usage.get("output") is not None:
+                    fields["output_tokens"] = token_usage["output"]
+                if token_usage.get("total") is not None:
+                    fields["total_tokens"] = token_usage["total"]
+            trace_service.update_trace(self.request_id, **fields)
+
+        self._active_run = None
+        return run
+
     # -- Internal helpers ---------------------------------------------------
+
+    def _require_run(self) -> AgentRun:
+        """Return the active run, auto-starting one if the caller skipped begin()."""
+        if self._active_run is None:
+            self.begin()
+        return self._active_run
+
+    def _phase(self, step_type, name, input=None, work=None, output=None, metadata=None, record=None):  # noqa: A002
+        """Run one traced phase: add step, execute work, record, finish."""
+        run = self._require_run()
+        step = self.add_step(run, step_type=step_type, name=name, input=input, metadata=metadata)
+        try:
+            result = work() if callable(work) else work
+        except Exception as exc:  # noqa: BLE001 - record then re-raise
+            self.finish_step(step, status=AgentStatus.FAILED, metadata=self._error_meta(metadata, exc))
+            raise
+        if record is not None:
+            record(step, result)
+        resolved_output = output if output is not None else (result if isinstance(result, str) else None)
+        self.finish_step(step, output=resolved_output)
+        return result
+
+    @staticmethod
+    def _stringify(value) -> Optional[str]:
+        """Coerce a value to a string for text columns (JSON for structures)."""
+        if value is None or isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+    # -- Internal helpers (low-level) ---------------------------------------
 
     @staticmethod
     def _as_id(ref: Optional[Union[AgentRun, int]]) -> Optional[int]:

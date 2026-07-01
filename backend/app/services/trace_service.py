@@ -81,6 +81,30 @@ def create_trace(data: dict) -> Trace:
     return trace
 
 
+def update_trace(trace_id: int, **fields) -> Optional[Trace]:
+    """Update an existing Trace in place (used to store the final response).
+
+    Only known columns are written, and ``total_tokens`` is recomputed when
+    input/output tokens are supplied without an explicit total. Returns the
+    updated Trace, or None if it does not exist.
+    """
+    trace = db.session.get(Trace, trace_id)
+    if trace is None:
+        return None
+
+    for key, value in fields.items():
+        if value is not None and hasattr(trace, key):
+            setattr(trace, key, value)
+
+    if fields.get("total_tokens") is None and (
+        fields.get("input_tokens") is not None or fields.get("output_tokens") is not None
+    ):
+        trace.total_tokens = (trace.input_tokens or 0) + (trace.output_tokens or 0)
+
+    db.session.commit()
+    return trace
+
+
 def list_traces(limit: int = 100, offset: int = 0) -> list[Trace]:
     """Return traces ordered by most recent first."""
     return (

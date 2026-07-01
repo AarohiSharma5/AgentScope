@@ -23,10 +23,12 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     # Blueprints
     from .routes.traces import traces_bp
     from .routes.agent_traces import agent_traces_bp
+    from .routes.chat import chat_bp
     from .middleware.logging import register_request_logging
 
     app.register_blueprint(traces_bp, url_prefix="/api")
     app.register_blueprint(agent_traces_bp, url_prefix="/api")
+    app.register_blueprint(chat_bp, url_prefix="/api")
     register_request_logging(app)
 
     @app.get("/api/health")
