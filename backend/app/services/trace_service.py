@@ -2,13 +2,26 @@
 
 Keeping persistence logic here (rather than in the routes) keeps the API thin
 and makes the same logic reusable from the middleware/SDK helper.
+
+This module also owns the persistence layer for **agent execution tracing**
+(v0.2). All SQLAlchemy session handling lives here so routes and the
+``TraceRecorder`` SDK never touch the session directly.
 """
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func
 
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
+from ..models.agent_trace import (
+    AgentRun,
+    AgentStep,
+    AgentStatus,
+    ToolExecution,
+    MemoryAccess,
+    RetrieverTrace,
+)
 
 # Rough price table (USD per 1K tokens) used to estimate cost when the caller
 # does not provide one. Extend as needed for your providers.
@@ -113,3 +126,190 @@ def get_stats() -> dict:
         "avg_cost": round(float(avg_cost), 6),
         "success_rate": round(success_count / total_requests * 100, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# Agent execution tracing (v0.2)
+#
+# These functions encapsulate all SQLAlchemy session logic for the agent
+# tracing models. The TraceRecorder SDK (utils/trace_recorder.py) composes
+# them; routes should never touch the session directly.
+# ---------------------------------------------------------------------------
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now."""
+    return datetime.now(timezone.utc)
+
+
+def create_agent_run(
+    request_id: int,
+    agent_name: str,
+    agent_type: Optional[str] = None,
+    parent_run_id: Optional[int] = None,
+    status: str = AgentStatus.RUNNING,
+    start_time: Optional[datetime] = None,
+    metadata: Optional[dict] = None,
+) -> AgentRun:
+    """Persist a new agent run and return it (flushed, so ``id`` is set)."""
+    run = AgentRun(
+        request_id=request_id,
+        agent_name=agent_name,
+        agent_type=agent_type,
+        parent_run_id=parent_run_id,
+        status=status,
+        start_time=start_time or _utcnow(),
+        run_metadata=metadata,
+    )
+    db.session.add(run)
+    db.session.commit()
+    return run
+
+
+def finish_agent_run(
+    run: AgentRun,
+    status: str = AgentStatus.SUCCESS,
+    end_time: Optional[datetime] = None,
+    latency_ms: Optional[float] = None,
+    metadata: Optional[dict] = None,
+) -> AgentRun:
+    """Mark an agent run finished, recording end time, latency and status."""
+    run.end_time = end_time or _utcnow()
+    run.status = status
+    if latency_ms is not None:
+        run.latency_ms = latency_ms
+    if metadata is not None:
+        run.run_metadata = metadata
+    db.session.commit()
+    return run
+
+
+def create_agent_step(
+    agent_run_id: int,
+    step_number: Optional[int] = None,
+    step_type: Optional[str] = None,
+    name: Optional[str] = None,
+    input: Optional[str] = None,
+    output: Optional[str] = None,
+    status: str = AgentStatus.RUNNING,
+    started_at: Optional[datetime] = None,
+    token_usage: Optional[dict] = None,
+    cost: Optional[float] = None,
+    metadata: Optional[dict] = None,
+) -> AgentStep:
+    """Persist a new step within an agent run."""
+    step = AgentStep(
+        agent_run_id=agent_run_id,
+        step_number=step_number,
+        step_type=step_type,
+        name=name,
+        input=input,
+        output=output,
+        status=status,
+        started_at=started_at or _utcnow(),
+        token_usage=token_usage,
+        cost=cost,
+        step_metadata=metadata,
+    )
+    db.session.add(step)
+    db.session.commit()
+    return step
+
+
+def finish_agent_step(
+    step: AgentStep,
+    status: str = AgentStatus.SUCCESS,
+    output: Optional[str] = None,
+    token_usage: Optional[dict] = None,
+    cost: Optional[float] = None,
+    latency_ms: Optional[float] = None,
+    finished_at: Optional[datetime] = None,
+    metadata: Optional[dict] = None,
+) -> AgentStep:
+    """Mark a step finished, recording end time, latency, output and status."""
+    step.finished_at = finished_at or _utcnow()
+    step.status = status
+    if output is not None:
+        step.output = output
+    if token_usage is not None:
+        step.token_usage = token_usage
+    if cost is not None:
+        step.cost = cost
+    if latency_ms is not None:
+        step.latency_ms = latency_ms
+    if metadata is not None:
+        step.step_metadata = metadata
+    db.session.commit()
+    return step
+
+
+def create_tool_execution(
+    step_id: int,
+    tool_name: str,
+    arguments: Optional[dict] = None,
+    result: Optional[str] = None,
+    status: str = AgentStatus.SUCCESS,
+    latency_ms: Optional[float] = None,
+    error_message: Optional[str] = None,
+) -> ToolExecution:
+    """Persist a tool/function call made during a step."""
+    tool = ToolExecution(
+        step_id=step_id,
+        tool_name=tool_name,
+        arguments=arguments,
+        result=result,
+        status=status,
+        latency_ms=latency_ms,
+        error_message=error_message,
+    )
+    db.session.add(tool)
+    db.session.commit()
+    return tool
+
+
+def create_memory_access(
+    step_id: int,
+    memory_type: Optional[str] = None,
+    query: Optional[str] = None,
+    retrieved_text: Optional[str] = None,
+    similarity_score: Optional[float] = None,
+    used: Optional[bool] = None,
+    latency_ms: Optional[float] = None,
+) -> MemoryAccess:
+    """Persist a memory read/lookup made during a step."""
+    memory = MemoryAccess(
+        step_id=step_id,
+        memory_type=memory_type,
+        query=query,
+        retrieved_text=retrieved_text,
+        similarity_score=similarity_score,
+        used=used,
+        latency_ms=latency_ms,
+    )
+    db.session.add(memory)
+    db.session.commit()
+    return memory
+
+
+def create_retriever_trace(
+    step_id: int,
+    query: Optional[str] = None,
+    retrieved_documents: Optional[list] = None,
+    embedding_time_ms: Optional[float] = None,
+    retrieval_time_ms: Optional[float] = None,
+    num_documents: Optional[int] = None,
+) -> RetrieverTrace:
+    """Persist a retrieval (RAG) call made during a step."""
+    if num_documents is None and retrieved_documents is not None:
+        num_documents = len(retrieved_documents)
+    retriever = RetrieverTrace(
+        step_id=step_id,
+        query=query,
+        retrieved_documents=retrieved_documents,
+        embedding_time_ms=embedding_time_ms,
+        retrieval_time_ms=retrieval_time_ms,
+        num_documents=num_documents,
+    )
+    db.session.add(retriever)
+    db.session.commit()
+    return retriever
