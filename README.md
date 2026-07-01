@@ -2,13 +2,19 @@
 
 **Chrome DevTools for AI applications.** AgentScope is an open-source developer tool for observing and debugging LLM-powered apps.
 
-![Version](https://img.shields.io/badge/version-0.1.0-6366f1)
+![Version](https://img.shields.io/badge/version-0.3.0-6366f1)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Backend](https://img.shields.io/badge/backend-Flask-000000)
 ![Database](https://img.shields.io/badge/db-PostgreSQL-336791)
 ![Frontend](https://img.shields.io/badge/frontend-React-61dafb)
 
 The first feature is the **AI Request Tracer**: every LLM request is captured and stored with its prompts, model, token usage, cost, latency, retrieved documents, tool calls, response and status — then surfaced in a clean, modern dashboard.
+
+AgentScope has since grown three layers of observability, all sharing the same `TraceRecorder` SDK and dashboard:
+
+- **v0.1 — Request tracing.** Per-request prompts, tokens, cost, latency and status.
+- **v0.2 — Agent execution tracing.** Full agent-run trees: steps, tool calls, memory accesses and retriever calls, with timelines and an execution tree.
+- **v0.3 — RAG Observatory.** Embeddings, vector search, retrieved documents (with similarity scores and selection), reranking and full **prompt assembly** — plus a vendor-neutral `RetrievalService` with adapters for Chroma, FAISS, Pinecone and Qdrant.
 
 ---
 
@@ -82,10 +88,13 @@ AgentScope/
 │   │   ├── __init__.py          # app factory
 │   │   ├── config.py            # env-based config (Postgres / SQLite fallback)
 │   │   ├── extensions.py        # SQLAlchemy instance
-│   │   ├── models/trace.py      # Trace model
-│   │   ├── routes/traces.py     # REST endpoints
-│   │   ├── services/trace_service.py   # business logic + stats + cost estimation
-│   │   └── middleware/logging.py       # request logging + TraceRecorder
+│   │   ├── models/              # trace (v0.1), agent_trace (v0.2), rag_trace (v0.3)
+│   │   ├── routes/              # traces, agent_traces, chat, rag blueprints
+│   │   ├── services/trace_service.py   # persistence + stats + cost estimation
+│   │   ├── retrieval/           # vendor-neutral RetrievalService + adapters (v0.3)
+│   │   ├── serializers/         # reusable ORM→JSON serializers
+│   │   ├── utils/trace_recorder.py     # TraceRecorder SDK (v0.2 + v0.3)
+│   │   └── middleware/logging.py       # request logging
 │   ├── Dockerfile               # gunicorn-served API
 │   ├── run.py                   # dev entry point
 │   ├── seed.py                  # sample data
@@ -156,6 +165,8 @@ npm run dev                     # http://localhost:5173 (proxies /api to :5001)
 
 ## API
 
+**Request tracing (v0.1)**
+
 | Method | Endpoint              | Description                  |
 | ------ | --------------------- | ---------------------------- |
 | POST   | `/api/traces`         | Ingest a new trace           |
@@ -163,6 +174,26 @@ npm run dev                     # http://localhost:5173 (proxies /api to :5001)
 | GET    | `/api/traces/:id`     | Get a single trace           |
 | GET    | `/api/stats`          | Aggregate dashboard metrics  |
 | GET    | `/api/health`         | Health check                 |
+
+**Agent execution tracing (v0.2)**
+
+| Method | Endpoint                              | Description                                   |
+| ------ | ------------------------------------- | --------------------------------------------- |
+| GET    | `/api/agent-runs`                     | List runs (pagination, search, sort, filter)  |
+| GET    | `/api/agent-runs/:id`                 | Run detail: steps, tools, memory, timeline    |
+| GET    | `/api/requests/:id/agent-runs`        | All runs for a request                        |
+| GET    | `/api/dashboard/agent-metrics`        | Aggregate agent-execution metrics             |
+
+**RAG Observatory (v0.3)**
+
+| Method | Endpoint                              | Description                                   |
+| ------ | ------------------------------------- | --------------------------------------------- |
+| GET    | `/api/retrievals`                     | List retrievals (pagination, search, sort, filter) |
+| GET    | `/api/retrievals/:id`                 | Retrieval detail: embedding, docs, scores, prompt, timeline |
+| GET    | `/api/prompts/:id`                    | Reconstructed prompt (all sections + final)   |
+| GET    | `/api/dashboard/rag-metrics`          | Aggregate RAG metrics                         |
+
+All collection endpoints share a `{ "data": [...], "pagination": {...} }` envelope, and errors share a `{ "error": ..., "details": {...} }` envelope.
 
 ### Capturing a request from your app
 
@@ -189,7 +220,11 @@ curl -X POST http://localhost:5001/api/traces \
 
 ## Roadmap
 
-`v0.1.0` is the first frozen MVP. Planned next: filtering/search, time-range charts, trace grouping by session, and SDK wrappers for popular providers.
+- `v0.1.0` — AI Request Tracer (frozen MVP).
+- `v0.2.0` — Agent execution tracing (runs, steps, tools, memory, retrievers) + dashboard.
+- `v0.3.0` — RAG Observatory: embeddings, retrieval, prompt assembly + vendor-neutral `RetrievalService`.
+
+Planned next: time-range charts, session grouping, live streaming of traces, and first-class SDK wrappers for popular providers.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 

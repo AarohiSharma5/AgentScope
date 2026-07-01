@@ -1,23 +1,50 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, NavLink, Route, Routes } from "react-router-dom";
 import Dashboard from "./pages/Dashboard.jsx";
 import TraceDetail from "./pages/TraceDetail.jsx";
+import AgentRuns from "./pages/AgentRuns.jsx";
+import AgentRunDetail from "./pages/AgentRunDetail.jsx";
+import RetrievalList from "./pages/RetrievalList.jsx";
+import RetrievalDetail from "./pages/RetrievalDetail.jsx";
+import PromptViewer from "./pages/PromptViewer.jsx";
+
+function NavItem({ to, label, end }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `rounded-md px-3 py-1.5 text-sm transition-colors ${
+          isActive
+            ? "bg-ink-600 text-gray-100"
+            : "text-gray-400 hover:text-gray-200"
+        }`
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
 
 export default function App() {
   return (
     <div className="min-h-full">
       <header className="sticky top-0 z-10 border-b border-ink-500 bg-ink-800/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Link to="/" className="flex items-center gap-2">
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">
-              A
-            </span>
-            <span className="text-base font-semibold text-gray-100">
-              AgentScope
-            </span>
-            <span className="ml-1 rounded-md bg-ink-500 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gray-400">
-              Tracer
-            </span>
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link to="/" className="flex items-center gap-2">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">
+                A
+              </span>
+              <span className="text-base font-semibold text-gray-100">
+                AgentScope
+              </span>
+            </Link>
+            <nav className="flex items-center gap-1">
+              <NavItem to="/" label="Requests" end />
+              <NavItem to="/agent-runs" label="Agent Runs" />
+              <NavItem to="/retrievals" label="RAG Observatory" />
+            </nav>
+          </div>
           <a
             href="https://github.com"
             className="text-sm text-gray-400 transition-colors hover:text-gray-200"
@@ -31,6 +58,11 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/traces/:id" element={<TraceDetail />} />
+          <Route path="/agent-runs" element={<AgentRuns />} />
+          <Route path="/agent-runs/:id" element={<AgentRunDetail />} />
+          <Route path="/retrievals" element={<RetrievalList />} />
+          <Route path="/retrievals/:id" element={<RetrievalDetail />} />
+          <Route path="/prompts/:id" element={<PromptViewer />} />
         </Routes>
       </main>
     </div>

@@ -1,9 +1,8 @@
 """SQLAlchemy model representing a single captured LLM request (a "trace")."""
-from datetime import datetime, timezone
-
 from sqlalchemy import JSON
 
 from ..extensions import db
+from ..utils.timeutils import utcnow
 
 
 class TraceStatus:
@@ -26,9 +25,7 @@ class Trace(db.Model):
     model_name = db.Column(db.String(120), nullable=False, index=True)
 
     # Timing
-    timestamp = db.Column(
-        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True
-    )
+    timestamp = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
     latency_ms = db.Column(db.Float, nullable=True)
 
     # Token usage & cost
