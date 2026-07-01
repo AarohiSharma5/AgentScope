@@ -89,13 +89,20 @@ class TraceRecorder:
         self,
         run: AgentRun,
         status: str = AgentStatus.SUCCESS,
+        latency_ms: Optional[float] = None,
         metadata: Optional[dict] = None,
     ) -> AgentRun:
-        """Finish an agent run, recording latency and final status."""
+        """Finish an agent run, recording latency and final status.
+
+        Latency is measured from the matching ``start_agent`` call unless an
+        explicit ``latency_ms`` is provided (used e.g. for parallel execution,
+        where each agent's wall-clock time is measured independently).
+        """
+        measured = self._elapsed_ms(self._run_started.pop(run.id, None))
         return trace_service.finish_agent_run(
             run,
             status=status,
-            latency_ms=self._elapsed_ms(self._run_started.pop(run.id, None)),
+            latency_ms=latency_ms if latency_ms is not None else measured,
             metadata=metadata,
         )
 

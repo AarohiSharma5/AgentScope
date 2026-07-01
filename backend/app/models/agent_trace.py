@@ -25,6 +25,9 @@ class AgentStatus:
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    # Additional terminal states used by the workflow engine (v0.4).
+    CANCELLED = "cancelled"
+    TIMEOUT = "timeout"
 
 
 class AgentRun(db.Model):

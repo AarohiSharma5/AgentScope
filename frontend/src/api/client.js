@@ -45,4 +45,12 @@ export const api = {
   getRetrieval: (id) => request(`/retrievals/${id}`),
   getPrompt: (id) => request(`/prompts/${id}`),
   getRagMetrics: () => request("/dashboard/rag-metrics"),
+
+  // v0.4 — multi-agent workflows, conversations and messages
+  getWorkflows: (params) => request(`/workflows${buildQuery(params)}`),
+  getWorkflow: (id) => request(`/workflows/${id}`),
+  getConversations: (params) => request(`/conversations${buildQuery(params)}`),
+  getConversation: (id) => request(`/conversations/${id}`),
+  getMessages: (params) => request(`/messages${buildQuery(params)}`),
+  getWorkflowMetrics: () => request("/dashboard/workflow-metrics"),
 };

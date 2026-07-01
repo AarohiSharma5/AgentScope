@@ -5,6 +5,59 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-01
+
+Adds **multi-agent workflow orchestration** — coordinate collaborating agents,
+run JSON-defined workflows, and trace typed agent-to-agent communication, built
+additively on the v0.1–v0.3 tracing layers.
+
+### Added
+
+- **Workflow data model** (`workflow_trace.py`): `ConversationRun`, `AgentNode`
+  (recursive parent/child tree), `AgentMessage` (with reply threading and
+  conversation linkage), `WorkflowDefinition` and `WorkflowExecution`, with
+  cascade / SET NULL behaviour and composite indexes.
+- **Multi-Agent SDK** (`orchestration/`): `AgentOrchestrator`, `Agent`,
+  `AgentContext` and `AgentRegistry` — nested parent/child agents, parallel
+  execution, a shared context, conversation persistence and automatic
+  timestamps / latency / status.
+- **Workflow Engine** (`orchestration/engine.py`): executes JSON workflow
+  definitions with sequential, parallel and conditional flow, retries, loops
+  (bounded by `max_visits` / `max_steps`), overall and per-node timeouts, and
+  cooperative cancellation. Every execution is traced automatically.
+- **Agent communication layer** (`services/message_service.py`): typed messages
+  (instruction, observation, question, answer, critique, tool result, memory
+  result) with direct send, broadcast, reply threading, conversation history,
+  search and timeline — every message records sender, receiver, timestamp,
+  latency, token usage and metadata.
+- **REST API**: `GET /api/workflows`, `GET /api/workflows/:id`,
+  `GET /api/conversations`, `GET /api/conversations/:id`, `GET /api/messages`,
+  `GET /api/dashboard/workflow-metrics`.
+- **Workflows & Conversations frontend**: workflow list/detail with an
+  interactive **execution graph** (DAG with zoom, pan, node selection, hover),
+  agent tree, agent cards, a vertical timeline and a chat-like message viewer.
+
+### Changed
+
+- Extracted a shared sort helper (`utils/sorting.py`) and centralised
+  page/limit validation (`utils/pagination.parse_page_limit`), removing the
+  duplicated sort/pagination logic across the trace, RAG and workflow layers.
+- Prevented N+1 queries in the workflow, conversation and message queries via
+  `selectinload` eager-loading (verified with query-count tests).
+- Extended `StatusBadge` and `AgentStatus` with `cancelled` and `timeout`
+  states used by the workflow engine.
+
+### Tests
+
+- Backend: workflow-engine (sequential, parallel, retries, timeout,
+  cancellation, loops), multi-agent SDK (creation, messaging, parent/child,
+  nested/parallel execution, shared context), communication layer (send,
+  broadcast, reply, history, search, timeline, N+1 guard) and workflow REST API
+  (pagination, filtering, search, error handling).
+- Frontend: Vitest suite covering the DAG layout, execution graph, agent
+  tree/card, message viewer, timeline and tables.
+- Verified SQLite **and** PostgreSQL compatibility (`scripts/check_pg_v04.py`).
+
 ## [0.3.0] - 2026-07-01
 
 Adds the **RAG Observatory** — end-to-end observability for retrieval-augmented
@@ -101,6 +154,7 @@ First MVP release of **AgentScope** — the AI Request Tracer.
   backend (gunicorn), and the React frontend (nginx) together.
 - **Documentation**: README, architecture diagram, screenshots, and seed script.
 
+[0.4.0]: https://github.com/your-org/agentscope/releases/tag/v0.4.0
 [0.3.0]: https://github.com/your-org/agentscope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/your-org/agentscope/releases/tag/v0.2.0
 [0.1.0]: https://github.com/your-org/agentscope/releases/tag/v0.1.0

@@ -19,26 +19,18 @@ from ..serializers.rag import (
     serialize_retrieval_summary,
 )
 from ..services import trace_service
-from ..utils.pagination import paginated
+from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 rag_bp = Blueprint("rag", __name__)
-
-_DEFAULT_LIMIT = 20
-_MAX_LIMIT = 100
 
 
 @rag_bp.get("/retrievals")
 def list_retrievals():
     """List retrievals with pagination, search, sorting and filtering."""
     try:
-        page = int(request.args.get("page", 1))
-        limit = int(request.args.get("limit", _DEFAULT_LIMIT))
-    except (TypeError, ValueError):
-        return error_response("page and limit must be integers", 400)
-    if page < 1:
-        return error_response("page must be >= 1", 400)
-    if not (1 <= limit <= _MAX_LIMIT):
-        return error_response(f"limit must be between 1 and {_MAX_LIMIT}", 400)
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
 
     q = request.args.get("q")
     if q is not None:

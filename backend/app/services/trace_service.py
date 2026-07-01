@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, asc, cast, desc, func, or_
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import selectinload
 
 from ..extensions import db
@@ -25,6 +25,7 @@ from ..models.agent_trace import (
     RetrieverTrace,
 )
 from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
+from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.tokens import estimate_tokens
 from ..utils.validation import ensure_json_array, ensure_json_object
@@ -398,18 +399,12 @@ _AGENT_RUN_SORT_COLUMNS = {name: getattr(AgentRun, name) for name in AGENT_RUN_S
 
 def is_valid_agent_run_sort(sort: str) -> bool:
     """Return True if ``sort`` targets an allowed field (optional ``-`` prefix)."""
-    if not sort:
-        return False
-    field = sort[1:] if sort.startswith("-") else sort
-    return field in AGENT_RUN_SORTABLE
+    return is_valid_sort(sort, AGENT_RUN_SORTABLE)
 
 
 def _apply_agent_run_sort(query, sort: str):
     """Apply ordering to an AgentRun query. Assumes ``sort`` already validated."""
-    descending = sort.startswith("-")
-    field = sort[1:] if descending else sort
-    column = _AGENT_RUN_SORT_COLUMNS[field]
-    return query.order_by(desc(column) if descending else asc(column))
+    return apply_sort(query, sort, _AGENT_RUN_SORT_COLUMNS)
 
 
 def list_agent_runs(
@@ -773,18 +768,12 @@ def _retrieval_detail_loaders():
 
 def is_valid_retrieval_sort(sort: str) -> bool:
     """Return True if ``sort`` targets an allowed field (optional ``-`` prefix)."""
-    if not sort:
-        return False
-    field = sort[1:] if sort.startswith("-") else sort
-    return field in RETRIEVAL_SORTABLE
+    return is_valid_sort(sort, RETRIEVAL_SORTABLE)
 
 
 def _apply_retrieval_sort(query, sort: str):
     """Apply ordering to a retrieval query. Assumes ``sort`` already validated."""
-    descending = sort.startswith("-")
-    field = sort[1:] if descending else sort
-    column = _RETRIEVAL_SORT_COLUMNS[field]
-    return query.order_by(desc(column) if descending else asc(column))
+    return apply_sort(query, sort, _RETRIEVAL_SORT_COLUMNS)
 
 
 def list_retrievals(

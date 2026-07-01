@@ -21,6 +21,16 @@ const STYLES = {
     dot: "bg-amber-400",
     label: "Pending",
   },
+  cancelled: {
+    wrap: "bg-gray-500/10 text-gray-400 ring-1 ring-gray-500/20",
+    dot: "bg-gray-400",
+    label: "Cancelled",
+  },
+  timeout: {
+    wrap: "bg-orange-500/10 text-orange-400 ring-1 ring-orange-500/20",
+    dot: "bg-orange-400",
+    label: "Timeout",
+  },
 };
 
 export default function StatusBadge({ status }) {
