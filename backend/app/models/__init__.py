@@ -8,3 +8,4 @@ models or behavior.
 from . import trace  # noqa: F401  (existing RequestTrace / Trace model)
 from . import agent_trace  # noqa: F401  (v0.2 agent execution tracing)
 from . import rag_trace  # noqa: F401  (v0.3 RAG / prompt-assembly tracing)
+from . import workflow_trace  # noqa: F401  (v0.4 multi-agent workflow orchestration)
