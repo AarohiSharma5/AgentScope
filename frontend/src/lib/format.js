@@ -18,3 +18,11 @@ export const fmtTime = (iso) => {
     minute: "2-digit",
   });
 };
+
+// Duration between two ISO timestamps, formatted like a latency.
+export const fmtDuration = (startIso, endIso) => {
+  if (!startIso || !endIso) return "—";
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return "—";
+  return fmtLatency(ms);
+};
