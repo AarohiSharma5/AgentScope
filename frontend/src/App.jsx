@@ -6,6 +6,10 @@ import AgentRunDetail from "./pages/AgentRunDetail.jsx";
 import RetrievalList from "./pages/RetrievalList.jsx";
 import RetrievalDetail from "./pages/RetrievalDetail.jsx";
 import PromptViewer from "./pages/PromptViewer.jsx";
+import Workflows from "./pages/Workflows.jsx";
+import WorkflowDetail from "./pages/WorkflowDetail.jsx";
+import Conversations from "./pages/Conversations.jsx";
+import ConversationDetail from "./pages/ConversationDetail.jsx";
 
 function NavItem({ to, label, end }) {
   return (
@@ -43,6 +47,8 @@ export default function App() {
               <NavItem to="/" label="Requests" end />
               <NavItem to="/agent-runs" label="Agent Runs" />
               <NavItem to="/retrievals" label="RAG Observatory" />
+              <NavItem to="/workflows" label="Workflows" />
+              <NavItem to="/conversations" label="Conversations" />
             </nav>
           </div>
           <a
@@ -63,6 +69,10 @@ export default function App() {
           <Route path="/retrievals" element={<RetrievalList />} />
           <Route path="/retrievals/:id" element={<RetrievalDetail />} />
           <Route path="/prompts/:id" element={<PromptViewer />} />
+          <Route path="/workflows" element={<Workflows />} />
+          <Route path="/workflows/:id" element={<WorkflowDetail />} />
+          <Route path="/conversations" element={<Conversations />} />
+          <Route path="/conversations/:id" element={<ConversationDetail />} />
         </Routes>
       </main>
     </div>

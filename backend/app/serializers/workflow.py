@@ -105,8 +105,30 @@ def serialize_workflow_detail(workflow: WorkflowDefinition) -> dict:
 # -- Conversations ----------------------------------------------------------
 
 
+def _node_totals(node: AgentNode) -> tuple:
+    """Aggregate latency, tokens and cost for a node from its agent run/steps."""
+    run = node.agent_run
+    if run is None:
+        return None, None, None
+    steps = list(run.steps)
+    total_tokens = 0
+    total_cost = 0.0
+    for step in steps:
+        usage = step.token_usage or {}
+        total_tokens += usage.get("total") or (
+            (usage.get("input") or 0) + (usage.get("output") or 0)
+        )
+        total_cost += step.cost or 0
+    return (
+        run.latency_ms,
+        total_tokens or None,
+        round(total_cost, 6) if total_cost else None,
+    )
+
+
 def _serialize_node(node: AgentNode) -> dict:
-    """Serialize a single agent node (no children)."""
+    """Serialize a single agent node (no children), with run aggregates."""
+    latency_ms, total_tokens, cost = _node_totals(node)
     return {
         "id": node.id,
         "name": node.display_name,
@@ -116,6 +138,9 @@ def _serialize_node(node: AgentNode) -> dict:
         "parallel_group": node.parallel_group,
         "parent_node_id": node.parent_node_id,
         "agent_run_id": node.agent_run_id,
+        "latency_ms": latency_ms,
+        "total_tokens": total_tokens,
+        "cost": cost,
     }
 
 
