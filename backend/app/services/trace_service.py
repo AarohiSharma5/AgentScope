@@ -10,7 +10,7 @@ This module also owns the persistence layer for **agent execution tracing**
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import asc, desc, func
 
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
@@ -313,3 +313,118 @@ def create_retriever_trace(
     db.session.add(retriever)
     db.session.commit()
     return retriever
+
+
+# ---------------------------------------------------------------------------
+# Agent execution tracing - read/query layer (v0.2 API)
+#
+# Query, pagination, sorting, filtering and aggregation logic lives here so the
+# routes stay thin and free of business logic.
+# ---------------------------------------------------------------------------
+
+# Fields that agent runs may be sorted by (exposed for route validation).
+AGENT_RUN_SORTABLE = {
+    "created_at",
+    "start_time",
+    "end_time",
+    "latency_ms",
+    "agent_name",
+    "status",
+}
+
+_AGENT_RUN_SORT_COLUMNS = {name: getattr(AgentRun, name) for name in AGENT_RUN_SORTABLE}
+
+
+def is_valid_agent_run_sort(sort: str) -> bool:
+    """Return True if ``sort`` targets an allowed field (optional ``-`` prefix)."""
+    if not sort:
+        return False
+    field = sort[1:] if sort.startswith("-") else sort
+    return field in AGENT_RUN_SORTABLE
+
+
+def _apply_agent_run_sort(query, sort: str):
+    """Apply ordering to an AgentRun query. Assumes ``sort`` already validated."""
+    descending = sort.startswith("-")
+    field = sort[1:] if descending else sort
+    column = _AGENT_RUN_SORT_COLUMNS[field]
+    return query.order_by(desc(column) if descending else asc(column))
+
+
+def list_agent_runs(
+    page: int = 1,
+    limit: int = 20,
+    status: Optional[str] = None,
+    agent_type: Optional[str] = None,
+    sort: str = "-created_at",
+) -> tuple[list[AgentRun], int]:
+    """Return a page of agent runs and the total matching count.
+
+    Filtering by ``status`` / ``agent_type``, sorting and pagination are all
+    applied at the database level.
+    """
+    query = AgentRun.query
+    if status is not None:
+        query = query.filter(AgentRun.status == status)
+    if agent_type is not None:
+        query = query.filter(AgentRun.agent_type == agent_type)
+
+    total = query.count()
+    query = _apply_agent_run_sort(query, sort)
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
+
+
+def get_agent_run(run_id: int) -> Optional[AgentRun]:
+    """Return a single agent run by id, or None."""
+    return db.session.get(AgentRun, run_id)
+
+
+def list_agent_runs_for_request(request_id: int) -> list[AgentRun]:
+    """Return every agent run belonging to a request, most recent first."""
+    return (
+        AgentRun.query.filter(AgentRun.request_id == request_id)
+        .order_by(AgentRun.created_at.desc())
+        .all()
+    )
+
+
+def get_agent_metrics() -> dict:
+    """Compute aggregate dashboard metrics across all agent runs."""
+    total_runs = db.session.query(func.count(AgentRun.id)).scalar() or 0
+
+    if total_runs == 0:
+        return {
+            "total_agent_runs": 0,
+            "average_latency": 0,
+            "average_steps": 0,
+            "average_tool_calls": 0,
+            "average_memory_calls": 0,
+            "average_retrievals": 0,
+            "average_cost": 0,
+            "success_rate": 0,
+        }
+
+    avg_latency = db.session.query(func.avg(AgentRun.latency_ms)).scalar() or 0
+    total_steps = db.session.query(func.count(AgentStep.id)).scalar() or 0
+    total_tools = db.session.query(func.count(ToolExecution.id)).scalar() or 0
+    total_memory = db.session.query(func.count(MemoryAccess.id)).scalar() or 0
+    total_retrievals = db.session.query(func.count(RetrieverTrace.id)).scalar() or 0
+    total_cost = db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0)).scalar() or 0
+    success_runs = (
+        db.session.query(func.count(AgentRun.id))
+        .filter(AgentRun.status == AgentStatus.SUCCESS)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "total_agent_runs": total_runs,
+        "average_latency": round(float(avg_latency), 2),
+        "average_steps": round(total_steps / total_runs, 2),
+        "average_tool_calls": round(total_tools / total_runs, 2),
+        "average_memory_calls": round(total_memory / total_runs, 2),
+        "average_retrievals": round(total_retrievals / total_runs, 2),
+        "average_cost": round(float(total_cost) / total_runs, 6),
+        "success_rate": round(success_runs / total_runs * 100, 2),
+    }
