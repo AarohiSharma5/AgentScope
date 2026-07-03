@@ -31,12 +31,15 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 
+[project.scripts]
+agentscope = "agentscope.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/AarohiSharma5/AgentScope"
 Repository = "https://github.com/AarohiSharma5/AgentScope"
 
 [tool.setuptools]
-packages = ["agentscope", "agentscope.exporters"]
+packages = ["agentscope", "agentscope.exporters", "agentscope.cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -114,6 +114,33 @@ trace.add_exporter(MyExporter())
 Built-in exporters: `ConsoleExporter`, `LoggingExporter`, `MemoryExporter`,
 `HTTPExporter` (ships to the AgentScope server).
 
+## Command-line interface
+
+Installing the package also provides the `agentscope` command (and
+`python -m agentscope`):
+
+```bash
+agentscope init                     # interactive configuration wizard
+agentscope doctor                   # check environment + connectivity
+agentscope status                   # live platform metrics
+agentscope trace list --limit 20    # recent request traces
+agentscope replay create --conversation 5 --model gpt-4o
+agentscope evaluate run --conversation 5 --reference "42"
+agentscope compare run --conversation 5 --model gpt-4o --model claude-3
+agentscope plugins list
+agentscope providers health openai
+agentscope export conversation 5 --format otel --out trace.json
+agentscope import bundle.json --replay --model gpt-4o
+agentscope start                    # launch the platform via docker compose
+agentscope                          # interactive shell
+```
+
+Commands: `init`, `start`, `trace`, `replay`, `evaluate`, `compare`, `plugins`,
+`providers`, `export`, `import`, `config`, `doctor`, `status`, `version`.
+Global flags include `--endpoint`, `--api-key`, `--json`, `--timeout`,
+`--color/--no-color`. Colored output is automatic on TTYs (respecting
+`NO_COLOR`) and works cross-platform. Run `agentscope <command> -h` for details.
+
 ## Compatibility
 
 The public API — `trace`, `Agent`, `Workflow`, `Tool`, `configure` — is stable
