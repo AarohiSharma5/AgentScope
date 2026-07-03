@@ -1,0 +1,288 @@
+"""Tests for the v1.0 authentication & multi-tenancy subsystem.
+
+Covers JWT encode/decode, password hashing, API-key hashing, the rate limiter,
+role hierarchy and the full REST surface (register/login/refresh, org/member/
+project/api-key isolation and RBAC, and audit logging).
+"""
+import time
+
+import pytest
+
+from app.auth import keys, tokens
+from app.auth.rate_limit import RateLimiter, limiter, parse_rate
+from app.auth.roles import Role, role_satisfies
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Rate limiter is a process-global singleton; isolate it per test."""
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
+# -- unit: tokens -----------------------------------------------------------
+
+
+def test_jwt_roundtrip_and_type():
+    token = tokens.encode({"sub": 7}, "secret", expires_in=60, token_type="access")
+    claims = tokens.decode(token, "secret", expected_type="access")
+    assert claims["sub"] == 7
+    assert "iat" in claims and "exp" in claims
+
+
+def test_jwt_rejects_bad_signature():
+    token = tokens.encode({"sub": 1}, "secret", expires_in=60)
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(token, "different-secret")
+
+
+def test_jwt_rejects_wrong_type():
+    token = tokens.encode({"sub": 1}, "secret", expires_in=60, token_type="refresh")
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(token, "secret", expected_type="access")
+
+
+def test_jwt_expiry():
+    token = tokens.encode({"sub": 1}, "secret", expires_in=-1)
+    with pytest.raises(tokens.ExpiredToken):
+        tokens.decode(token, "secret")
+
+
+# -- unit: keys, roles, rate limit ------------------------------------------
+
+
+def test_api_key_hash_and_verify():
+    raw, prefix, hashed = keys.new_key("as")
+    assert raw.startswith("as_")
+    assert raw.startswith(prefix)
+    assert keys.verify_key(raw, hashed)
+    assert not keys.verify_key(raw + "x", hashed)
+
+
+def test_role_hierarchy():
+    assert role_satisfies(Role.ADMIN, Role.VIEWER)
+    assert role_satisfies(Role.DEVELOPER, Role.DEVELOPER)
+    assert not role_satisfies(Role.VIEWER, Role.DEVELOPER)
+
+
+def test_rate_limiter_fixed_window():
+    rl = RateLimiter()
+    assert parse_rate("2/minute") == (2, 60)
+    assert rl.hit("k", 2, 60)[0] is True
+    assert rl.hit("k", 2, 60)[0] is True
+    allowed, retry_after = rl.hit("k", 2, 60)
+    assert allowed is False and retry_after >= 1
+
+
+# -- helpers for API tests --------------------------------------------------
+
+
+def _register(client, email="admin@acme.test", org="Acme", password="password123"):
+    resp = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": password, "name": "Admin", "organization_name": org},
+    )
+    assert resp.status_code == 201, resp.get_json()
+    body = resp.get_json()
+    return body
+
+
+def _auth_header(tokens_obj):
+    return {"Authorization": f"Bearer {tokens_obj['access_token']}"}
+
+
+# -- API: register / login / refresh ----------------------------------------
+
+
+def test_register_creates_user_org_and_admin(client):
+    body = _register(client)
+    assert body["user"]["email"] == "admin@acme.test"
+    assert body["membership"]["role"] == Role.ADMIN
+    assert "access_token" in body["tokens"] and "refresh_token" in body["tokens"]
+
+
+def test_register_duplicate_email_rejected(client):
+    _register(client)
+    resp = client.post(
+        "/api/auth/register",
+        json={"email": "admin@acme.test", "password": "password123", "organization_name": "Other"},
+    )
+    assert resp.status_code == 400
+
+
+def test_login_and_me(client):
+    _register(client)
+    resp = client.post("/api/auth/login", json={"email": "admin@acme.test", "password": "password123"})
+    assert resp.status_code == 200
+    tokens_obj = resp.get_json()["tokens"]
+
+    me = client.get("/api/auth/me", headers=_auth_header(tokens_obj))
+    assert me.status_code == 200
+    assert me.get_json()["user"]["email"] == "admin@acme.test"
+    assert len(me.get_json()["memberships"]) == 1
+
+
+def test_login_wrong_password(client):
+    _register(client)
+    resp = client.post("/api/auth/login", json={"email": "admin@acme.test", "password": "nope"})
+    assert resp.status_code == 401
+
+
+def test_refresh_token(client):
+    body = _register(client)
+    resp = client.post("/api/auth/refresh", json={"refresh_token": body["tokens"]["refresh_token"]})
+    assert resp.status_code == 200
+    assert "access_token" in resp.get_json()["tokens"]
+
+
+def test_me_requires_auth(client):
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.get("/api/auth/me", headers={"Authorization": "Bearer garbage"}).status_code == 401
+
+
+# -- API: RBAC & organization isolation -------------------------------------
+
+
+def test_org_isolation_between_tenants(client):
+    a = _register(client, email="a@a.test", org="Acme")
+    b = _register(client, email="b@b.test", org="Beta")
+    org_a = a["organization"]["id"]
+
+    # Member of Beta cannot read Acme.
+    resp = client.get(f"/api/organizations/{org_a}", headers=_auth_header(b["tokens"]))
+    assert resp.status_code == 403
+
+    # Admin of Acme can.
+    resp = client.get(f"/api/organizations/{org_a}", headers=_auth_header(a["tokens"]))
+    assert resp.status_code == 200
+
+
+def test_viewer_cannot_manage_members(client):
+    admin = _register(client, email="admin@acme.test", org="Acme")
+    org_id = admin["organization"]["id"]
+    # Create a viewer user in another org, then add to Acme as viewer.
+    _register(client, email="viewer@acme.test", org="Personal")
+
+    add = client.post(
+        f"/api/organizations/{org_id}/members",
+        json={"email": "viewer@acme.test", "role": Role.VIEWER},
+        headers=_auth_header(admin["tokens"]),
+    )
+    assert add.status_code == 201
+
+    viewer_login = client.post(
+        "/api/auth/login", json={"email": "viewer@acme.test", "password": "password123"}
+    ).get_json()["tokens"]
+
+    # Viewer may read members but not add them.
+    assert client.get(
+        f"/api/organizations/{org_id}/members", headers={"Authorization": f"Bearer {viewer_login['access_token']}"}
+    ).status_code == 200
+    forbidden = client.post(
+        f"/api/organizations/{org_id}/members",
+        json={"email": "admin@acme.test", "role": Role.VIEWER},
+        headers={"Authorization": f"Bearer {viewer_login['access_token']}"},
+    )
+    assert forbidden.status_code == 403
+
+
+def test_cannot_grant_role_higher_than_own(client):
+    admin = _register(client, email="admin@acme.test", org="Acme")
+    org_id = admin["organization"]["id"]
+    _register(client, email="dev@acme.test", org="DevHome")
+    client.post(
+        f"/api/organizations/{org_id}/members",
+        json={"email": "dev@acme.test", "role": Role.DEVELOPER},
+        headers=_auth_header(admin["tokens"]),
+    )
+    dev_tokens = client.post(
+        "/api/auth/login", json={"email": "dev@acme.test", "password": "password123"}
+    ).get_json()["tokens"]
+
+    # A developer cannot create an admin API key (higher than own role).
+    resp = client.post(
+        f"/api/organizations/{org_id}/api-keys",
+        json={"name": "k", "role": Role.ADMIN},
+        headers=_auth_header(dev_tokens),
+    )
+    assert resp.status_code == 403
+
+
+# -- API: projects & api keys -----------------------------------------------
+
+
+def test_project_and_api_key_lifecycle(client):
+    admin = _register(client)
+    org_id = admin["organization"]["id"]
+    headers = _auth_header(admin["tokens"])
+
+    proj = client.post(
+        f"/api/organizations/{org_id}/projects", json={"name": "Search"}, headers=headers
+    )
+    assert proj.status_code == 201
+    project_id = proj.get_json()["id"]
+
+    created = client.post(
+        f"/api/organizations/{org_id}/api-keys",
+        json={"name": "ci", "role": Role.DEVELOPER, "project_id": project_id},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    raw = created.get_json()["key"]
+    assert raw and raw.startswith("as_")
+
+    # The key authenticates and is scoped to its organization.
+    me = client.get("/api/auth/me", headers={"X-API-Key": raw})
+    assert me.status_code == 200
+    assert me.get_json()["identity"]["auth_type"] == "api_key"
+    assert me.get_json()["identity"]["organization_id"] == org_id
+
+    # Listing never leaks the secret.
+    listed = client.get(f"/api/organizations/{org_id}/api-keys", headers=headers).get_json()
+    assert all("key" not in k for k in listed["data"])
+
+    # Revoke -> key stops working.
+    key_id = created.get_json()["id"]
+    assert client.delete(f"/api/organizations/{org_id}/api-keys/{key_id}", headers=headers).status_code == 200
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 401
+
+
+def test_api_key_cannot_cross_organizations(client):
+    a = _register(client, email="a@a.test", org="Acme")
+    b = _register(client, email="b@b.test", org="Beta")
+    org_a, org_b = a["organization"]["id"], b["organization"]["id"]
+
+    created = client.post(
+        f"/api/organizations/{org_a}/api-keys",
+        json={"name": "k", "role": Role.ADMIN},
+        headers=_auth_header(a["tokens"]),
+    )
+    raw = created.get_json()["key"]
+
+    # Acme's key cannot read Beta.
+    resp = client.get(f"/api/organizations/{org_b}", headers={"X-API-Key": raw})
+    assert resp.status_code == 403
+
+
+# -- API: audit logs & rate limiting ----------------------------------------
+
+
+def test_audit_logs_recorded_and_scoped(client):
+    admin = _register(client)
+    org_id = admin["organization"]["id"]
+    resp = client.get(f"/api/organizations/{org_id}/audit-logs", headers=_auth_header(admin["tokens"]))
+    assert resp.status_code == 200
+    actions = {row["action"] for row in resp.get_json()["data"]}
+    # Registration recorded the org creation under this org.
+    assert "user.registered" in actions or "organization.created" in actions
+
+
+def test_login_rate_limited(client):
+    _register(client)
+    # login limit is 10/minute; the 11th attempt should be throttled.
+    last = None
+    for _ in range(11):
+        last = client.post("/api/auth/login", json={"email": "admin@acme.test", "password": "wrong"})
+    assert last.status_code == 429
+    assert last.headers.get("Retry-After") is not None

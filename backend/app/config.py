@@ -57,3 +57,23 @@ class Config:
     ]
     # Entry-point group used by pip-installed third-party plugins.
     PLUGINS_ENTRYPOINT_GROUP = os.getenv("PLUGINS_ENTRYPOINT_GROUP", "agentscope.plugins")
+
+    # -- Authentication & multi-tenancy (v1.0) ------------------------------
+    # Global enforcement on the existing data routes is OFF by default so the
+    # platform stays 100% backward compatible; the auth/tenancy endpoints and
+    # decorators are always available for opt-in protection.
+    AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() == "true"
+
+    # JWT signing. Defaults to SECRET_KEY so a single secret suffices in dev.
+    JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY", "dev-secret-key")
+    JWT_ISSUER = os.getenv("JWT_ISSUER", "agentscope")
+    JWT_ACCESS_TTL = int(os.getenv("JWT_ACCESS_TTL", "900"))  # 15 minutes
+    JWT_REFRESH_TTL = int(os.getenv("JWT_REFRESH_TTL", "2592000"))  # 30 days
+
+    # API keys are minted with this human-readable prefix (e.g. ``as_...``).
+    API_KEY_PREFIX = os.getenv("API_KEY_PREFIX", "as")
+
+    # In-memory rate limiting (per process). Applied to auth endpoints and
+    # available as a decorator for any route.
+    RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
+    RATE_LIMIT_DEFAULT = os.getenv("RATE_LIMIT_DEFAULT", "120/minute")

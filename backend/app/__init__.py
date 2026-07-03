@@ -77,6 +77,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         rag_trace,
         workflow_trace,
         evaluation_trace,
+        auth,
     )
 
     # Blueprints
@@ -90,7 +91,10 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.plugins import plugins_bp
     from .routes.providers import providers_bp
     from .routes.exports import exports_bp
+    from .routes.auth import auth_bp
+    from .routes.organizations import orgs_bp
     from .middleware.logging import register_request_logging
+    from .auth import register_auth_error_handlers
 
     app.register_blueprint(traces_bp, url_prefix="/api")
     app.register_blueprint(agent_traces_bp, url_prefix="/api")
@@ -102,9 +106,12 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(plugins_bp, url_prefix="/api")
     app.register_blueprint(providers_bp, url_prefix="/api")
     app.register_blueprint(exports_bp, url_prefix="/api")
+    app.register_blueprint(auth_bp, url_prefix="/api")
+    app.register_blueprint(orgs_bp, url_prefix="/api")
     _register_websocket(app)
     register_request_logging(app)
     register_error_handlers(app)
+    register_auth_error_handlers(app)
 
     @app.get("/api/health")
     def health():
