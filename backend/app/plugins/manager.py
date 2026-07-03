@@ -153,11 +153,19 @@ class PluginManager:
         logger.info("enabled plugin '%s'", name)
         return record
 
-    def disable(self, name: str) -> PluginRecord:
-        """Disable a plugin: withdraw its contributions from the registry."""
+    def disable(self, name: str, cascade: bool = True) -> PluginRecord:
+        """Disable a plugin: withdraw its contributions from the registry.
+
+        By default this cascades: any enabled plugin that depends on ``name`` is
+        disabled first (transitively), so no enabled plugin is ever left relying
+        on a disabled dependency. Pass ``cascade=False`` to disable only ``name``.
+        """
         record = self.get(name)
         if record.state != PluginState.ENABLED:
             return record
+        if cascade:
+            for dependent in self._dependents(name):
+                self.disable(dependent, cascade=True)
         with self._lock:
             self.registry.remove_plugin(record.name)
             if record.instance is not None:
@@ -167,10 +175,10 @@ class PluginManager:
         return record
 
     def uninstall(self, name: str) -> None:
-        """Fully remove a plugin (disabling it first if enabled)."""
+        """Fully remove a plugin (cascade-disabling dependents first if enabled)."""
         record = self.get(name)
         if record.state == PluginState.ENABLED:
-            self.disable(name)
+            self.disable(name)  # cascades to dependents
         with self._lock:
             self.registry.remove_plugin(record.name)
             if record.instance is not None:
@@ -305,6 +313,21 @@ class PluginManager:
                 )
 
     # -- Internal ----------------------------------------------------------
+
+    def _dependents(self, name: str) -> list[str]:
+        """Names of installed plugins that directly declare a dependency on ``name``."""
+        dependents: list[str] = []
+        with self._lock:
+            for record in self._records.values():
+                for spec in record.metadata.dependencies:
+                    try:
+                        depends_on = Requirement.parse(spec).name
+                    except ValueError:
+                        continue
+                    if depends_on == name:
+                        dependents.append(record.name)
+                        break
+        return dependents
 
     def _instance(self, record: PluginRecord) -> PluginBase:
         """Return the plugin instance, creating it on first use."""

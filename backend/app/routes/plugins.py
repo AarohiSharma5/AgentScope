@@ -93,8 +93,10 @@ def enable_plugin(name: str):
 
 @plugins_bp.post("/plugins/<name>/disable")
 def disable_plugin(name: str):
+    # Cascade to dependents by default; ?cascade=false disables only this plugin.
+    cascade = request.args.get("cascade", "true").lower() != "false"
     try:
-        record = plugin_manager.disable(name)
+        record = plugin_manager.disable(name, cascade=cascade)
         return jsonify(record.to_dict())
     except PluginNotFoundError:
         return jsonify({"error": f"plugin '{name}' not found"}), 404

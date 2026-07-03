@@ -63,6 +63,20 @@ class BetaPlugin(PluginBase):
         context.register_evaluator("t_beta", object())
 
 
+class GammaPlugin(PluginBase):
+    """Depends on test-beta (which depends on test-alpha) for transitive tests."""
+
+    metadata = PluginMetadata(
+        name="test-gamma",
+        version="1.0.0",
+        capabilities=[Capability.MEMORY],
+        dependencies=["test-beta>=1.0.0"],
+    )
+
+    def register(self, context: PluginContext) -> None:
+        context.register_memory("t_gamma", object())
+
+
 @pytest.fixture()
 def manager():
     """A fresh manager bound to an isolated registry (no global state)."""
@@ -264,6 +278,52 @@ def test_python_requires_present_package_installs(manager):
     assert manager.is_installed("test-needs-flask")
 
 
+def test_disable_cascades_to_dependents(manager):
+    manager.install(AlphaPlugin)
+    manager.install(BetaPlugin)
+    manager.enable("test-alpha")
+    manager.enable("test-beta")
+
+    manager.disable("test-alpha")
+    # The dependent is disabled too, so nothing enabled relies on a disabled dep.
+    assert manager.state("test-alpha") == PluginState.DISABLED
+    assert manager.state("test-beta") == PluginState.DISABLED
+    assert manager.registry.get_evaluator("t_beta") is None
+
+
+def test_disable_cascade_can_be_opted_out(manager):
+    manager.install(AlphaPlugin)
+    manager.install(BetaPlugin)
+    manager.enable("test-alpha")
+    manager.enable("test-beta")
+
+    manager.disable("test-alpha", cascade=False)
+    assert manager.state("test-alpha") == PluginState.DISABLED
+    assert manager.state("test-beta") == PluginState.ENABLED  # left as-is
+
+
+def test_disable_cascade_is_transitive(manager):
+    for plugin in (AlphaPlugin, BetaPlugin, GammaPlugin):
+        manager.install(plugin)
+    manager.enable_all()
+    assert manager.state("test-gamma") == PluginState.ENABLED
+
+    manager.disable("test-alpha")
+    assert manager.state("test-beta") == PluginState.DISABLED
+    assert manager.state("test-gamma") == PluginState.DISABLED
+
+
+def test_uninstall_cascades_disable_to_dependents(manager):
+    manager.install(AlphaPlugin)
+    manager.install(BetaPlugin)
+    manager.enable("test-alpha")
+    manager.enable("test-beta")
+
+    manager.uninstall("test-alpha")
+    assert not manager.is_installed("test-alpha")
+    assert manager.state("test-beta") == PluginState.DISABLED
+
+
 def test_enable_all_respects_dependency_order(manager):
     # Install beta before alpha; enable_all must still order them correctly.
     manager.install(BetaPlugin)
@@ -415,3 +475,18 @@ def test_api_reload_plugin(client):
     resp = client.post("/api/plugins/sample-tools/reload")
     assert resp.status_code == 200
     assert resp.get_json()["state"] == PluginState.ENABLED
+
+
+def test_api_disable_cascades_to_dependent(client):
+    # sample-ui depends on sample-tools; disabling sample-tools disables sample-ui.
+    assert client.post("/api/plugins/sample-tools/disable").status_code == 200
+    assert client.get("/api/plugins/sample-ui").get_json()["state"] == PluginState.DISABLED
+    # Restore (dependency first, then dependent).
+    client.post("/api/plugins/sample-tools/enable")
+    client.post("/api/plugins/sample-ui/enable")
+
+
+def test_api_disable_cascade_false_leaves_dependent(client):
+    assert client.post("/api/plugins/sample-tools/disable?cascade=false").status_code == 200
+    assert client.get("/api/plugins/sample-ui").get_json()["state"] == PluginState.ENABLED
+    client.post("/api/plugins/sample-tools/enable")
