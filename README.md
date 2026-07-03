@@ -482,11 +482,18 @@ curl "http://localhost:5001/api/trace-diff?a=1&b=2"      # full trace diff
 - `v0.3.0` — RAG Observatory: embeddings, retrieval, prompt assembly + vendor-neutral `RetrievalService`.
 - `v0.4.0` — Multi-agent workflows: `AgentOrchestrator`, `WorkflowEngine`, agent communication layer, and the Workflows / Conversations dashboards with an interactive execution graph.
 - `v0.5.0` — Replay, evaluation & comparison: `ReplayEngine`, `EvaluationEngine` (10 metrics + LLM-as-a-Judge + custom), `ModelComparisonEngine`, auto prompt-versioning with prompt & trace diffs, and the Replays / Evaluations / Comparisons / Diffs / Analytics dashboards.
+- `v0.6.0` — Real-time streaming (SSE + WebSocket), extensible plugin system, vendor-neutral provider abstraction (9 adapters), export/import (OTel, JSON, CSV, SQLite, Postgres, Zip, Trace Bundle), and a live-mode dashboard.
+- `v1.0.0` — **Stable release**: `agentscope-lite` Python SDK, `agentscope` CLI, authentication & multi-tenancy (opt-in), complete documentation, CI/CD, and a performance pass built to scale to millions of traces.
 
-Planned next: live streaming of traces, session grouping, and first-class SDK wrappers for popular providers.
+See [CHANGELOG.md](CHANGELOG.md) and the [Release Notes](docs/release-notes.md) for release history.
 
-See [CHANGELOG.md](CHANGELOG.md) for release history.
+## Contributing
+
+Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md)
+and our [Code of Conduct](CODE_OF_CONDUCT.md) to get started. To upgrade an
+existing install, see the [Migration Guide](docs/migration.md). To report a
+vulnerability, follow the [Security Policy](SECURITY.md).
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Aarohi Sharma.

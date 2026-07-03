@@ -1,0 +1,73 @@
+name: Bug report
+description: Report a problem so we can fix it
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please search existing issues
+        first to avoid duplicates.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I call GET /api/... I get ... but I expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, reliable steps (commands, requests, code).
+      placeholder: |
+        1. docker compose up
+        2. POST /api/traces with ...
+        3. See error ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Backend (REST API / services)
+        - Frontend (dashboard)
+        - SDK (agentscope-lite)
+        - CLI
+        - Streaming
+        - Plugins / Providers
+        - Export / Import
+        - Docker / Deployment
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options:
+        - SQLite
+        - PostgreSQL
+        - N/A
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: v1.0.0 or commit sha
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS / Python / Node
+      placeholder: macOS 14, Python 3.13, Node 20
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / output
+      render: shell

@@ -5,6 +5,94 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-07-03
+
+The first **stable, production-ready** release. AgentScope graduates from a
+web-app-only tool to a full platform: an installable Python SDK, a first-class
+CLI, authentication and multi-tenancy, complete documentation, CI/CD, and a
+performance pass built to scale to millions of traces. Fully backward compatible
+with v0.1–v0.6 — every existing API and database is unchanged.
+
+### Added
+
+- **`agentscope-lite` Python SDK** (`sdk/`): a dependency-free, `pip install`-able
+  package exposing `from agentscope import trace, Agent, Workflow, Tool`.
+  Supports decorator, context-manager and manual tracing, `contextvars`-based
+  async/thread-safe span context, configuration via `AGENTSCOPE_*` env vars, and
+  pluggable exporters (Console, Memory, Logging, HTTP → `/api/traces`).
+- **`agentscope` CLI**: `init`, `start`, `trace`, `replay`, `evaluate`,
+  `compare`, `plugins`, `providers`, `export`, `import`, `config`, `doctor`,
+  `status`, `version` plus an interactive shell. Colored, cross-platform output
+  (Windows VT + `NO_COLOR`), a config wizard, and `docker compose` auto-detection.
+- **Authentication & multi-tenancy**: `Organization`, `User`, `Membership`,
+  `Project`, `ApiKey` and `AuditLog` models; JWT (stdlib HS256), pbkdf2 password
+  hashing, hashed API keys, RBAC (Admin/Developer/Viewer), org/project isolation,
+  in-memory rate limiting and audit logs. Opt-in and **off by default**
+  (`AUTH_ENABLED=false`) so existing deployments are unaffected.
+- **Complete documentation** (`docs/`): getting-started, installation,
+  quickstart, tracing/workflows/replay/evaluation/providers/plugins guides,
+  REST/SDK/CLI/architecture reference, deployment, Docker, performance, CI/CD,
+  FAQ and troubleshooting — plus nine runnable examples and Mermaid diagrams.
+- **CI/CD** (GitHub Actions): lint (Ruff), security (Bandit + pip-audit), CodeQL,
+  cross-platform pytest matrix (Linux/macOS/Windows) with coverage, frontend
+  build/tests, Docker image builds, and a release pipeline (PyPI via OIDC, GHCR,
+  GitHub Releases). Dependabot for pip/npm/docker/actions.
+- **Community & release files**: release notes, migration guide, contributing
+  guide, Code of Conduct, security policy, and issue/PR templates.
+
+### Performance
+
+- **Connection pooling** for PostgreSQL (`pool_size`, `max_overflow`,
+  `pool_recycle`, `pool_pre_ping`, LIFO reuse) — all env-tunable.
+- **Composite indexes** on `traces` (`status,timestamp` / `model,timestamp`) plus
+  `backend/scripts/perf_indexes.sql` to backfill existing databases online.
+- **Single-pass dashboard aggregations** (5–7 queries collapsed to 1–2) and a
+  short-TTL in-process **metrics cache** (`METRICS_CACHE_TTL`).
+- **Bounded counts + keyset pagination** helpers for huge tables.
+- **Bounded background job manager** (`BACKGROUND_WORKERS`) with
+  `GET /api/jobs[/<id>]`, cached per-event stream serialization, and memoized
+  frontend table rows.
+- Benchmark harness (`backend/scripts/benchmark_api.py`) and
+  [performance docs](docs/performance.md).
+
+## [0.6.0] - 2026-07-03
+
+Adds **real-time streaming, extensibility and portability**: live SSE/WebSocket
+event streaming, a plugin system, a vendor-neutral provider abstraction, an
+export/import subsystem, and a live-mode dashboard. Additive and backward
+compatible with v0.1–v0.5.
+
+### Added
+
+- **Real-time streaming** (`streaming/`): a thread-safe `LiveTraceManager`
+  pub/sub hub broadcasting trace/agent/step/tool/retriever/memory/workflow/
+  evaluation events over **Server-Sent Events** (`/api/stream`) and **WebSocket**.
+  Connection management, heartbeats, drop-newest backpressure with bounded
+  per-subscriber queues, `Last-Event-ID` reconnection replay and graceful
+  disconnect. Emission is exception-safe and never disrupts persistence.
+- **Plugin system** (`plugins/`): `PluginManager`, `PluginRegistry`,
+  `PluginLoader` and `PluginBase` supporting custom tools, evaluators, memories,
+  retrievers, LLM providers and UI extensions. Full lifecycle (install, load,
+  enable, disable, uninstall, reload) with auto-registration, metadata, semantic
+  versioning, dependency checking and cascading enable/disable of dependents.
+  Discovers packages, filesystem drop-ins and pip entry points. REST-managed.
+- **Provider abstraction** (`providers/`): vendor-neutral `LLMProvider`,
+  `EmbeddingProvider`, `RetrieverProvider`, `MemoryProvider` and `ToolProvider`
+  interfaces exposing `chat()`, `embed()`, `stream()`, token counting, cost
+  estimation and health checks, with discoverable capabilities. Adapters for
+  OpenAI, Anthropic, Google Gemini, Ollama, OpenRouter, Azure OpenAI, Groq,
+  DeepSeek and Mistral. New providers register without touching core code.
+- **Export/import subsystem** (`exporting/`): export conversations, workflows,
+  replays, evaluations and analytics to OpenTelemetry (OTLP/JSON, GenAI semantic
+  conventions), JSON, CSV, SQLite, PostgreSQL, Zip archive and a portable
+  **Trace Bundle**; importers reconstruct the database and support replay from
+  exported traces.
+- **Live-mode dashboard** (frontend): real-time updating tables, live timeline,
+  streaming execution graph, and Running Conversations/Agents/Replays/Evaluations
+  cards with live tokens/latency/cost. Reusable `useEventStream`/`useLiveState`
+  hooks and `LiveTable`/`LiveTimeline`/`LiveExecutionGraph`/`LiveStatCard`
+  components, with reconnect, pause/resume and topic filtering.
+
 ## [0.5.0] - 2026-07-03
 
 Adds **replay, evaluation and model comparison** — re-run any traced
@@ -218,8 +306,10 @@ First MVP release of **AgentScope** — the AI Request Tracer.
   backend (gunicorn), and the React frontend (nginx) together.
 - **Documentation**: README, architecture diagram, screenshots, and seed script.
 
-[0.5.0]: https://github.com/your-org/agentscope/releases/tag/v0.5.0
-[0.4.0]: https://github.com/your-org/agentscope/releases/tag/v0.4.0
-[0.3.0]: https://github.com/your-org/agentscope/releases/tag/v0.3.0
-[0.2.0]: https://github.com/your-org/agentscope/releases/tag/v0.2.0
-[0.1.0]: https://github.com/your-org/agentscope/releases/tag/v0.1.0
+[1.0.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v1.0.0
+[0.6.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.6.0
+[0.5.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.5.0
+[0.4.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.4.0
+[0.3.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.3.0
+[0.2.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.2.0
+[0.1.0]: https://github.com/AarohiSharma5/AgentScope/releases/tag/v0.1.0
