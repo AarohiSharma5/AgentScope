@@ -1,0 +1,19 @@
+{
+  "name": "research-flow",
+  "version": "1.0",
+  "entry": "planner",
+  "nodes": {
+    "planner":    {"type": "task", "role": "planner", "next": "fanout"},
+    "fanout":     {"type": "parallel",
+                   "branches": ["research_a", "research_b"],
+                   "next": "merge"},
+    "research_a": {"type": "task", "role": "researcher", "retries": 2},
+    "research_b": {"type": "task", "role": "researcher"},
+    "merge":      {"type": "task", "role": "merger", "next": "review"},
+    "review":     {"type": "condition",
+                   "when": {"var": "confidence", "op": "lt", "value": 0.7},
+                   "if_true": "critic", "if_false": "finish"},
+    "critic":     {"type": "task", "role": "critic", "next": "review", "max_visits": 3},
+    "finish":     {"type": "end"}
+  }
+}

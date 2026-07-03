@@ -2,7 +2,7 @@
 
 **Chrome DevTools for AI applications.** AgentScope is an open-source developer tool for observing and debugging LLM-powered apps.
 
-![Version](https://img.shields.io/badge/version-0.5.0-6366f1)
+![Version](https://img.shields.io/badge/version-1.0.0-6366f1)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Backend](https://img.shields.io/badge/backend-Flask-000000)
 ![Database](https://img.shields.io/badge/db-PostgreSQL-336791)
@@ -17,6 +17,21 @@ AgentScope has since grown five layers of observability, all sharing the same `T
 - **v0.3 — RAG Observatory.** Embeddings, vector search, retrieved documents (with similarity scores and selection), reranking and full **prompt assembly** — plus a vendor-neutral `RetrievalService` with adapters for Chroma, FAISS, Pinecone and Qdrant.
 - **v0.4 — Multi-agent workflows.** Orchestrate collaborating agents (`AgentOrchestrator`), execute JSON-defined workflows (`WorkflowEngine`) with sequential / parallel / conditional flow, retries, loops, timeouts and cancellation, and trace typed agent-to-agent messages — visualized as an interactive execution graph, agent tree, timeline and chat-like message viewer.
 - **v0.5 — Replay, evaluation & comparison.** Re-run any traced conversation under a different model / temperature / prompt / memory / tools (`ReplayEngine`), score it with pluggable evaluators — rule-based, LLM-as-a-Judge or custom (`EvaluationEngine`, 10 built-in metrics) — and run one workflow against many models side by side (`ModelComparisonEngine`). Prompts are auto-versioned so you get **prompt diffs** and full **trace diffs**, all surfaced in Replay, Evaluation, Comparison, Diffs and Analytics dashboards.
+- **v0.6 — Real-time & extensibility.** Live streaming of every event over SSE/WebSockets (`LiveTraceManager`) with a **Live** dashboard; a **plugin system** for custom tools/evaluators/memories/retrievers/providers/UI; a vendor-neutral **provider abstraction** with adapters for 9 providers; and **export/import** to OpenTelemetry, JSON, CSV, SQLite, PostgreSQL, Zip and a canonical Trace Bundle.
+- **v1.0 — SDK, CLI & auth.** The dependency-free **`agentscope-lite`** Python SDK (`pip install agentscope-lite`), the **`agentscope`** CLI, and opt-in **authentication & multi-tenancy** (users, organizations, projects, API keys, roles, JWT, rate limiting, audit logs).
+
+---
+
+## Documentation
+
+Complete documentation lives in [`docs/`](docs/README.md): Getting Started,
+Installation, Quick Start, guides (Tracing, Workflows, Replay, Evaluation,
+Providers, Plugins), the REST API / SDK / CLI references, architecture diagrams,
+Deployment, Docker, an [Examples](examples/README.md) folder of runnable programs,
+an [FAQ](docs/faq.md) and [Troubleshooting](docs/troubleshooting.md).
+
+- **New here?** [Getting Started](docs/getting-started.md) → [Installation](docs/installation.md) → [Quick Start](docs/quickstart.md)
+- **Reference:** [REST API](docs/reference/rest-api.md) · [SDK](docs/reference/sdk.md) · [CLI](docs/reference/cli.md) · [Architecture](docs/reference/architecture.md)
 
 ---
 
