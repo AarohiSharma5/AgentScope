@@ -53,7 +53,13 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
     # Import models so SQLAlchemy is aware of them before create_all.
-    from .models import trace, agent_trace, rag_trace, workflow_trace  # noqa: F401
+    from .models import (  # noqa: F401
+        trace,
+        agent_trace,
+        rag_trace,
+        workflow_trace,
+        evaluation_trace,
+    )
 
     # Blueprints
     from .routes.traces import traces_bp
