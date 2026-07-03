@@ -10,7 +10,7 @@ installed.
 for local development and tests.
 """
 import math
-from typing import Any, Optional
+from typing import Any
 
 from .interfaces import SearchHit, VectorStore
 

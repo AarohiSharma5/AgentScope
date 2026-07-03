@@ -1,0 +1,38 @@
+# Ruff configuration shared by the backend and the SDK.
+# Ruff provides both the linter (`ruff check`) and the formatter (`ruff format`)
+# used in CI, so no separate flake8/black/isort tooling is needed.
+
+line-length = 100
+target-version = "py39"
+
+extend-exclude = [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "*.egg-info",
+    "node_modules",
+    "frontend",
+]
+
+[lint]
+# The enforced (build-failing) rule set: pyflakes (F) catches real bugs like
+# unused/undefined names, and pycodestyle (E/W) catches syntax-level style
+# errors. Import sorting (I) and modernization (UP) are surfaced by the
+# advisory `ruff format`/`ruff check` steps rather than gating the build, so we
+# don't force a wholesale rewrite of existing code.
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # line length is a formatter concern, not a hard lint failure
+    "E741",  # allow short names like `a`/`b` in diff/compare helpers
+]
+
+[lint.per-file-ignores]
+# Package __init__ files intentionally re-export names.
+"**/__init__.py" = ["F401"]
+# Tests may use fixtures/imports/locals that look unused to static analysis.
+"**/tests/**" = ["F401", "F811", "F841", "E402"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

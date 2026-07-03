@@ -17,6 +17,7 @@ import EvaluationDetail from "./pages/EvaluationDetail.jsx";
 import Comparisons from "./pages/Comparisons.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Diffs from "./pages/Diffs.jsx";
+import Live from "./pages/Live.jsx";
 
 function NavItem({ to, label, end }) {
   return (
@@ -61,6 +62,15 @@ export default function App() {
               <NavItem to="/comparisons" label="Comparisons" />
               <NavItem to="/diffs" label="Diffs" />
               <NavItem to="/analytics" label="Analytics" />
+              <NavItem
+                to="/live"
+                label={
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Live
+                  </span>
+                }
+              />
             </nav>
           </div>
           <a
@@ -92,6 +102,7 @@ export default function App() {
           <Route path="/comparisons" element={<Comparisons />} />
           <Route path="/diffs" element={<Diffs />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/live" element={<Live />} />
         </Routes>
       </main>
     </div>

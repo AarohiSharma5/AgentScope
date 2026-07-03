@@ -21,7 +21,7 @@ from typing import Any, Optional
 from sqlalchemy import or_
 
 from ..extensions import db
-from ..models.agent_trace import AgentRun, AgentStatus, AgentStep
+from ..models.agent_trace import AgentStatus, AgentStep
 from ..models.evaluation_trace import ModelComparison, ReplayRun
 from ..models.workflow_trace import AgentNode, ConversationRun
 from ..services import workflow_service

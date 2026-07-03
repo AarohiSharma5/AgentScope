@@ -1,0 +1,196 @@
+name: Release
+
+# Runs when a version tag (vX.Y.Z) is pushed, or manually via the Actions tab
+# (which creates and pushes the tag for you). It builds and publishes the SDK to
+# PyPI, builds and pushes Docker images to GHCR, and creates a GitHub Release
+# with generated changelog notes and the built artifacts attached.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the leading v (e.g. 1.0.1)"
+        required: true
+
+permissions:
+  contents: write # create tags + releases
+  packages: write # push images to GHCR
+  id-token: write # PyPI trusted publishing (OIDC)
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------ resolve version + ensure tag
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $VERSION"
+
+      - name: Create and push tag (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "v${{ steps.resolve.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag already exists; skipping creation."
+          else
+            git tag -a "v${{ steps.resolve.outputs.version }}" \
+              -m "Release v${{ steps.resolve.outputs.version }}"
+            git push origin "v${{ steps.resolve.outputs.version }}"
+          fi
+
+  # ------------------------------------------------------------- build the SDK
+  build-sdk:
+    name: Build Python package
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        working-directory: sdk
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: sdk/dist/*
+
+  # --------------------------------------------------------- publish to PyPI
+  pypi-publish:
+    name: Publish to PyPI
+    needs: build-sdk
+    runs-on: ubuntu-latest
+    # Non-blocking: a release should still succeed if PyPI isn't configured yet.
+    # Requires either a configured Trusted Publisher (OIDC) or a PYPI_API_TOKEN.
+    continue-on-error: true
+    environment: pypi
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  # ------------------------------------------------ build + push Docker images
+  docker-publish:
+    name: Build & push Docker images
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image prefix
+        run: echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/agentscope-backend:${{ needs.prepare.outputs.version }}
+            ${{ env.IMAGE_PREFIX }}/agentscope-backend:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/agentscope-frontend:${{ needs.prepare.outputs.version }}
+            ${{ env.IMAGE_PREFIX }}/agentscope-frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ----------------------------------------------------- create GitHub Release
+  github-release:
+    name: Create GitHub Release
+    needs: [prepare, build-sdk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          NOTES_FILE="release-notes.md"
+          # Pull the section for this version out of CHANGELOG.md, if present.
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { grab=1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > "$NOTES_FILE" || true
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "No curated changelog section found; relying on auto-generated notes." > "$NOTES_FILE"
+          fi
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: AgentScope ${{ needs.prepare.outputs.tag }}
+          body_path: ${{ steps.changelog.outputs.notes_file }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: false

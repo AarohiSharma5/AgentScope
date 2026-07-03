@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentscope-lite"
+version = "1.0.0"
+description = "Lightweight, dependency-free tracing SDK for AI agents, tools and workflows — the client for the AgentScope observability platform."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Aarohi Sharma", email = "aarohisharma5005@gmail.com" }]
+keywords = ["observability", "tracing", "llm", "agents", "ai", "workflow", "agentscope"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
+
+# The SDK is intentionally dependency-free: it uses only the standard library
+# so it can be dropped into any project without pulling in a heavy tree.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+agentscope = "agentscope.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/AarohiSharma5/AgentScope"
+Repository = "https://github.com/AarohiSharma5/AgentScope"
+
+[tool.setuptools]
+packages = ["agentscope", "agentscope.exporters", "agentscope.cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
