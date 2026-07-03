@@ -33,3 +33,27 @@ class Config:
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
         if origin.strip()
     ]
+
+    # -- Real-time streaming (v0.6) -----------------------------------------
+    # Heartbeat cadence (seconds) for SSE/WebSocket connections.
+    STREAM_HEARTBEAT_INTERVAL = float(os.getenv("STREAM_HEARTBEAT_INTERVAL", "15"))
+
+    # -- Plugin system (v0.6) -----------------------------------------------
+    # Discover, install and enable plugins at startup. Set False to disable.
+    PLUGINS_AUTOLOAD = os.getenv("PLUGINS_AUTOLOAD", "true").lower() != "false"
+    # Python packages scanned for self-registering plugins.
+    PLUGINS_PACKAGES = [
+        pkg.strip()
+        for pkg in os.getenv("PLUGINS_PACKAGES", "app.plugins.builtins").split(",")
+        if pkg.strip()
+    ]
+    # Optional filesystem directories of drop-in ``*.py`` plugins.
+    PLUGINS_DIRECTORIES = [
+        d.strip() for d in os.getenv("PLUGINS_DIRECTORIES", "").split(",") if d.strip()
+    ]
+    # Optional additional dotted module paths to import for discovery.
+    PLUGINS_MODULES = [
+        m.strip() for m in os.getenv("PLUGINS_MODULES", "").split(",") if m.strip()
+    ]
+    # Entry-point group used by pip-installed third-party plugins.
+    PLUGINS_ENTRYPOINT_GROUP = os.getenv("PLUGINS_ENTRYPOINT_GROUP", "agentscope.plugins")
