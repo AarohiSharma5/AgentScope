@@ -27,6 +27,7 @@ from .engine import (
 )
 from .orchestrator import AgentOrchestrator
 from .registry import AgentRegistry
+from .replay_engine import ReplayEngine, ReplayError, ReplayResult
 
 __all__ = [
     "AgentOrchestrator",
@@ -39,4 +40,7 @@ __all__ = [
     "WorkflowValidationError",
     "CancellationToken",
     "validate_workflow",
+    "ReplayEngine",
+    "ReplayResult",
+    "ReplayError",
 ]
