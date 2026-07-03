@@ -18,7 +18,12 @@ from app.comparison import ModelComparisonEngine  # noqa: E402
 from app.evaluation import EvaluationEngine  # noqa: E402
 from app.extensions import db  # noqa: E402
 from app.orchestration import AgentOrchestrator, ReplayEngine  # noqa: E402
-from app.services import evaluation_service, replay_service  # noqa: E402
+from app.services import (  # noqa: E402
+    diff_service,
+    evaluation_service,
+    prompt_service,
+    replay_service,
+)
 
 _SPEC = {
     "name": "pg-replay-flow",
@@ -100,11 +105,36 @@ def main() -> int:
         assert len(cmp.comparison_ids) == 2
         assert cmp.side_by_side["models"] == ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"]
 
+        # -- Prompt versioning + prompt diff -----------------------------------
+        # The original planner's prompt was auto-captured as a version. Diff it
+        # against a second (edited) version of the same prompt.
+        from app.models.workflow_trace import AgentNode
+        planner_run_id = (
+            AgentNode.query.filter_by(conversation_run_id=original_id).first().agent_run_id
+        )
+        versions, v_total = prompt_service.list_prompt_versions(agent_run_id=planner_run_id)
+        assert v_total >= 1, "prompt version was not auto-captured"
+        v1 = versions[0]
+        v2 = prompt_service.record_prompt_version(planner_run_id, "sys\n\ndo it now, please")
+        pdiff = diff_service.prompt_diff(v2.id, v1.id)
+        assert pdiff is not None and not pdiff["identical"]
+        changes = pdiff["stats"]["added"] + pdiff["stats"]["removed"] + pdiff["stats"]["modified"]
+        assert changes >= 1, pdiff["stats"]
+
+        # -- Trace diff --------------------------------------------------------
+        tdiff = diff_service.trace_diff(original_id, result.replay_conversation_run_id)
+        assert tdiff is not None
+        cost_row = next(r for r in tdiff["metrics"] if r["metric"] == "cost")
+        assert cost_row["delta"] is not None, tdiff["metrics"]
+        assert len(tdiff["nodes"]) >= 1
+
         print("PostgreSQL v0.5 compatibility: OK")
         print(f"  original={original_id} replay_conv={result.replay_conversation_run_id}")
         print(f"  replay_cost={result.totals['cost']} comparison_winner={comparison.winner}")
         print(f"  eval_overall={eval_result.overall_score} metrics={len(stored_eval.metrics)}")
         print(f"  comparison_winner={cmp.winner} models={cmp.side_by_side['models']}")
+        print(f"  prompt_versions={v_total} prompt_diff_stats={pdiff['stats']}")
+        print(f"  trace_diff_nodes={len(tdiff['nodes'])} cost_delta={cost_row['delta']}")
 
         # cleanup this run's original conversation (cascades to replay-produced rows
         # only where FK-linked; replay conversation is standalone, remove explicitly).

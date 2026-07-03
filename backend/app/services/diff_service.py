@@ -11,11 +11,14 @@ Two read-only comparison helpers:
   node-by-node alignment (with per-node output diffs), reusing the replay
   snapshot so there is no duplicated trace-reconstruction logic.
 """
+import logging
 import re
 from difflib import SequenceMatcher
 from typing import Optional
 
 from ..services import prompt_service, replay_service
+
+logger = logging.getLogger("agentscope")
 
 # Split into words and whitespace runs so re-joined segments preserve spacing.
 _TOKEN_RE = re.compile(r"\s+|\S+")
@@ -79,12 +82,16 @@ def prompt_diff(version_a_id: int, version_b_id: int) -> Optional[dict]:
     if a is None or b is None:
         return None
     segments = diff_segments(a.prompt_text, b.prompt_text)
+    stats = _diff_stats(segments)
+    logger.debug(
+        "Prompt diff v%s->v%s (ids %s->%s): %s", a.version, b.version, a.id, b.id, stats
+    )
     return {
         "a": _version_side(a),
         "b": _version_side(b),
         "identical": a.hash == b.hash,
         "segments": segments,
-        "stats": _diff_stats(segments),
+        "stats": stats,
     }
 
 
@@ -180,6 +187,10 @@ def trace_diff(conversation_a_id: int, conversation_b_id: int) -> Optional[dict]
     totals_b = replay_service.conversation_totals(conversation_b_id)
     counts_a = _snapshot_counts(a)
     counts_b = _snapshot_counts(b)
+    logger.debug(
+        "Trace diff conversations %s vs %s: %s vs %s nodes",
+        conversation_a_id, conversation_b_id, counts_a["nodes"], counts_b["nodes"],
+    )
 
     count_rows = [
         _metric_row(label, counts_a[label], counts_b[label])
