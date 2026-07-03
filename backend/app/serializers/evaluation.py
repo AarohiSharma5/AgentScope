@@ -8,9 +8,23 @@ from ..models.evaluation_trace import (
     EvaluationMetric,
     EvaluationRun,
     ModelComparison,
+    PromptVersion,
     ReplayRun,
 )
 from .common import iso as _iso
+
+
+def serialize_prompt_version(version: PromptVersion) -> dict:
+    """Serialize a versioned prompt snapshot."""
+    return {
+        "id": version.id,
+        "agent_run_id": version.agent_run_id,
+        "version": version.version,
+        "prompt_text": version.prompt_text,
+        "hash": version.hash,
+        "metadata": version.prompt_metadata,
+        "created_at": _iso(version.created_at),
+    }
 
 
 def serialize_replay_run(replay: ReplayRun) -> dict:

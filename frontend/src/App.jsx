@@ -16,6 +16,7 @@ import Evaluations from "./pages/Evaluations.jsx";
 import EvaluationDetail from "./pages/EvaluationDetail.jsx";
 import Comparisons from "./pages/Comparisons.jsx";
 import Analytics from "./pages/Analytics.jsx";
+import Diffs from "./pages/Diffs.jsx";
 
 function NavItem({ to, label, end }) {
   return (
@@ -49,7 +50,7 @@ export default function App() {
                 AgentScope
               </span>
             </Link>
-            <nav className="flex items-center gap-1">
+            <nav className="flex flex-wrap items-center gap-1">
               <NavItem to="/" label="Requests" end />
               <NavItem to="/agent-runs" label="Agent Runs" />
               <NavItem to="/retrievals" label="RAG Observatory" />
@@ -58,6 +59,7 @@ export default function App() {
               <NavItem to="/replays" label="Replays" />
               <NavItem to="/evaluations" label="Evaluations" />
               <NavItem to="/comparisons" label="Comparisons" />
+              <NavItem to="/diffs" label="Diffs" />
               <NavItem to="/analytics" label="Analytics" />
             </nav>
           </div>
@@ -88,6 +90,7 @@ export default function App() {
           <Route path="/evaluations" element={<Evaluations />} />
           <Route path="/evaluations/:id" element={<EvaluationDetail />} />
           <Route path="/comparisons" element={<Comparisons />} />
+          <Route path="/diffs" element={<Diffs />} />
           <Route path="/analytics" element={<Analytics />} />
         </Routes>
       </main>

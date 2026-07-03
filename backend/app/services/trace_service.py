@@ -672,6 +672,16 @@ def create_prompt_assembly(
         "Recorded prompt assembly id=%s run_id=%s total_tokens=%s",
         assembly.id, agent_run_id, total_tokens,
     )
+
+    # Automatically capture a versioned, hashed snapshot of the assembled prompt
+    # (de-duplicated by hash) so prompts can be diffed across runs over time.
+    from . import prompt_service
+
+    prompt_service.record_prompt_version(
+        agent_run_id,
+        assembled_prompt,
+        metadata={"prompt_assembly_id": assembly.id, "total_tokens": total_tokens},
+    )
     return assembly
 
 

@@ -26,9 +26,10 @@ from ..orchestration import ReplayEngine, ReplayError
 from ..serializers.evaluation import (
     serialize_evaluation_run,
     serialize_model_comparison,
+    serialize_prompt_version,
     serialize_replay_run,
 )
-from ..services import evaluation_service, replay_service
+from ..services import diff_service, evaluation_service, prompt_service, replay_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 evaluations_bp = Blueprint("evaluations", __name__)
@@ -351,6 +352,90 @@ def create_comparison():
         ),
         201,
     )
+
+
+# -- Prompt versions & diff -------------------------------------------------
+
+
+def _required_int_arg(name: str):
+    """Parse a required integer query arg. Returns (value, error_response|None)."""
+    raw = request.args.get(name)
+    if raw is None or raw.strip() == "":
+        return None, error_response(f"{name} (integer) is required", 400)
+    try:
+        return int(raw), None
+    except (TypeError, ValueError):
+        return None, error_response(f"{name} must be an integer", 400)
+
+
+@evaluations_bp.get("/prompt-versions")
+def list_prompt_versions():
+    """List captured prompt versions with pagination, filtering and search."""
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
+
+    try:
+        agent_run_id = _int_arg("agent_run_id")
+    except (TypeError, ValueError):
+        return error_response("agent_run_id must be an integer", 400)
+
+    sort = request.args.get("sort", "-created_at")
+    if not prompt_service.is_valid_prompt_version_sort(sort):
+        return error_response(
+            "invalid sort field",
+            400,
+            {
+                "allowed": sorted(prompt_service.PROMPT_VERSION_SORTABLE),
+                "hint": "prefix with '-' for descending, e.g. -created_at",
+            },
+        )
+
+    items, total = prompt_service.list_prompt_versions(
+        page=page, limit=limit, agent_run_id=agent_run_id,
+        q=_clean(request.args.get("q")), sort=sort,
+    )
+    return jsonify(paginated([serialize_prompt_version(v) for v in items], page, limit, total))
+
+
+@evaluations_bp.get("/prompt-versions/<int:version_id>")
+def get_prompt_version(version_id: int):
+    """Return a single prompt version."""
+    version = prompt_service.get_prompt_version(version_id)
+    if version is None:
+        return error_response("prompt version not found", 404)
+    return jsonify(serialize_prompt_version(version))
+
+
+@evaluations_bp.get("/prompt-diff")
+def prompt_diff():
+    """Word-level diff of two prompt versions (query args ``a`` and ``b``)."""
+    a, err = _required_int_arg("a")
+    if err:
+        return err
+    b, err = _required_int_arg("b")
+    if err:
+        return err
+    result = diff_service.prompt_diff(a, b)
+    if result is None:
+        return error_response("prompt version not found", 404)
+    return jsonify(result)
+
+
+@evaluations_bp.get("/trace-diff")
+def trace_diff():
+    """Diff two traced conversations (query args ``a`` and ``b``)."""
+    a, err = _required_int_arg("a")
+    if err:
+        return err
+    b, err = _required_int_arg("b")
+    if err:
+        return err
+    result = diff_service.trace_diff(a, b)
+    if result is None:
+        return error_response("conversation trace not found", 404)
+    return jsonify(result)
 
 
 # -- Dashboard --------------------------------------------------------------

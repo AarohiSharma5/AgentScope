@@ -140,7 +140,19 @@ export default function ReplayDetail() {
             </Card>
           </Section>
 
-          <Section title="Original vs Replay">
+          <Section
+            title="Original vs Replay"
+            action={
+              replay.metadata?.replay_conversation_run_id ? (
+                <Link
+                  to={`/diffs?tab=trace&a=${replay.original_conversation_run_id}&b=${replay.metadata.replay_conversation_run_id}`}
+                  className="text-sm text-accent hover:text-accent-hover"
+                >
+                  Full trace diff →
+                </Link>
+              ) : null
+            }
+          >
             {original ? (
               <DiffTable
                 original={conversationSummary(original)}
