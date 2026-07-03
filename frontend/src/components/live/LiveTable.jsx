@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import EmptyState from "../ui/EmptyState.jsx";
 
 // A single row that briefly flashes whenever its `updatedAt` changes, so live
 // updates are visible without a full re-render of the table.
-function LiveRow({ row, columns, rowKey }) {
+//
+// Wrapped in React.memo so that, during a high-frequency event stream, only the
+// rows whose object identity actually changed re-render. The live reducer
+// produces immutable updates (unchanged rows keep the same reference), and the
+// column config is a stable module-level constant, so this is safe and removes
+// most of the per-event render cost on a busy dashboard.
+const LiveRow = memo(function LiveRow({ row, columns }) {
   const prev = useRef(row.updatedAt);
   const [flash, setFlash] = useState(false);
 
@@ -22,7 +28,7 @@ function LiveRow({ row, columns, rowKey }) {
   });
 
   return (
-    <tr key={rowKey(row)} className={flash ? "live-flash" : ""}>
+    <tr className={flash ? "live-flash" : ""}>
       {columns.map((col) => (
         <td key={col.key} className={`px-4 py-2.5 ${col.className || ""}`}>
           {col.render ? col.render(row) : row[col.key]}
@@ -30,7 +36,7 @@ function LiveRow({ row, columns, rowKey }) {
       ))}
     </tr>
   );
-}
+});
 
 // Generic real-time table driven by a column config. Reused for every live
 // listing (conversations, agents, …) so no table markup is duplicated.
@@ -53,7 +59,7 @@ export default function LiveTable({ columns, rows, rowKey = (r) => r.id, empty }
         </thead>
         <tbody className="divide-y divide-ink-600">
           {rows.map((row) => (
-            <LiveRow key={rowKey(row)} row={row} columns={columns} rowKey={rowKey} />
+            <LiveRow key={rowKey(row)} row={row} columns={columns} />
           ))}
         </tbody>
       </table>

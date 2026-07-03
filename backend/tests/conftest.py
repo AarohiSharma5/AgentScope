@@ -10,6 +10,7 @@ from app import create_app
 from app.config import Config
 from app.extensions import db
 from app.services import trace_service
+from app.utils.cache import clear_cache
 
 
 @pytest.fixture()
@@ -19,13 +20,18 @@ def app(tmp_path):
     class TestConfig(Config):
         TESTING = True
         SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test.db'}"
+        # Disable the metrics cache so assertions on freshly written data are
+        # deterministic (production keeps the default short TTL).
+        METRICS_CACHE_TTL = 0
 
+    clear_cache()
     app = create_app(TestConfig)
     yield app
 
     with app.app_context():
         db.session.remove()
         db.drop_all()
+    clear_cache()
 
 
 @pytest.fixture()

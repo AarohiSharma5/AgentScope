@@ -31,6 +31,7 @@ This is the complete documentation. If you are new, start with
 
 ### Operations
 - [Deployment](deployment.md) — production deployment, config, auth, scaling.
+- [Performance & Scaling](performance.md) — pooling, indexes, caching, background jobs, benchmarks.
 - [Docker](docker.md) — the containerized stack in depth.
 - [CI/CD](ci-cd.md) — GitHub Actions pipelines: tests, lint, security, releases.
 

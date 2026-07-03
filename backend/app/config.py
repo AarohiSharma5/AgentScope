@@ -28,6 +28,38 @@ class Config:
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # -- Connection pooling & query performance -----------------------------
+    # A healthy connection pool is essential under concurrent load. These are
+    # only meaningful for a real server backend (PostgreSQL); SQLite uses its
+    # own pool implementation and ignores size-related options, so we apply the
+    # full set only for non-SQLite URIs.
+    _IS_SQLITE = SQLALCHEMY_DATABASE_URI.startswith("sqlite")
+    if _IS_SQLITE:
+        # `pool_pre_ping` still guards against stale connections cheaply.
+        SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+    else:
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            "pool_pre_ping": True,  # detect dropped connections before using them
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "1800")),  # recycle every 30m
+            "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+            "pool_use_lifo": True,  # reuse hot connections, let idle ones expire
+        }
+
+    # Short-lived in-process cache TTL (seconds) for expensive read-only
+    # aggregations such as dashboard metrics. Set to 0 to disable caching.
+    METRICS_CACHE_TTL = float(os.getenv("METRICS_CACHE_TTL", "5"))
+
+    # Cap COUNT(*) on very large tables to keep list endpoints fast. A list
+    # response reports up to this many rows as its total (with a flag), avoiding
+    # a full-table count on millions of rows. Set to 0 to always count exactly.
+    MAX_COUNT_LIMIT = int(os.getenv("MAX_COUNT_LIMIT", "0"))
+
+    # Bounded worker pool for long-running background jobs (replay, evaluation,
+    # comparison, export) so they never tie up request-handling threads.
+    BACKGROUND_WORKERS = int(os.getenv("BACKGROUND_WORKERS", "4"))
+
     CORS_ORIGINS = [
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")

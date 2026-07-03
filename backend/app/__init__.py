@@ -93,6 +93,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.exports import exports_bp
     from .routes.auth import auth_bp
     from .routes.organizations import orgs_bp
+    from .routes.jobs import jobs_bp
     from .middleware.logging import register_request_logging
     from .auth import register_auth_error_handlers
 
@@ -108,6 +109,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(exports_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(orgs_bp, url_prefix="/api")
+    app.register_blueprint(jobs_bp, url_prefix="/api")
     _register_websocket(app)
     register_request_logging(app)
     register_error_handlers(app)
@@ -120,6 +122,9 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     _enable_sqlite_foreign_keys(app)
     with app.app_context():
         db.create_all()
+
+    from .jobs import job_manager
+    job_manager.init_app(app)
 
     from .plugins import init_plugins
     init_plugins(app)

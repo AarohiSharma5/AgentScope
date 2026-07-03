@@ -1,9 +1,46 @@
+import { memo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "./StatusBadge.jsx";
 import { fmtCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
 
+// Memoized row so re-renders (e.g. periodic dashboard refreshes) only touch
+// rows whose data actually changed, keeping large trace pages responsive.
+const TraceRow = memo(function TraceRow({ trace: t, onOpen }) {
+  return (
+    <tr
+      onClick={() => onOpen(t.id)}
+      className="cursor-pointer transition-colors hover:bg-ink-600"
+    >
+      <td className="px-4 py-3">
+        <span className="rounded-md bg-ink-500 px-2 py-1 font-mono text-xs text-gray-300">
+          {t.model_name}
+        </span>
+      </td>
+      <td className="max-w-xs truncate px-4 py-3 text-gray-400">
+        {t.user_prompt || "—"}
+      </td>
+      <td className="px-4 py-3">
+        <StatusBadge status={t.status} />
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-gray-300">
+        {fmtNumber(t.total_tokens)}
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-gray-300">
+        {fmtLatency(t.latency_ms)}
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-gray-300">
+        {fmtCost(t.estimated_cost)}
+      </td>
+      <td className="px-4 py-3 text-right text-gray-500">
+        {fmtTime(t.timestamp)}
+      </td>
+    </tr>
+  );
+});
+
 export default function TracesTable({ traces }) {
   const navigate = useNavigate();
+  const openTrace = useCallback((id) => navigate(`/traces/${id}`), [navigate]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-ink-500 bg-ink-700">
@@ -21,35 +58,7 @@ export default function TracesTable({ traces }) {
         </thead>
         <tbody className="divide-y divide-ink-600">
           {traces.map((t) => (
-            <tr
-              key={t.id}
-              onClick={() => navigate(`/traces/${t.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
-            >
-              <td className="px-4 py-3">
-                <span className="rounded-md bg-ink-500 px-2 py-1 font-mono text-xs text-gray-300">
-                  {t.model_name}
-                </span>
-              </td>
-              <td className="max-w-xs truncate px-4 py-3 text-gray-400">
-                {t.user_prompt || "—"}
-              </td>
-              <td className="px-4 py-3">
-                <StatusBadge status={t.status} />
-              </td>
-              <td className="px-4 py-3 text-right font-mono text-gray-300">
-                {fmtNumber(t.total_tokens)}
-              </td>
-              <td className="px-4 py-3 text-right font-mono text-gray-300">
-                {fmtLatency(t.latency_ms)}
-              </td>
-              <td className="px-4 py-3 text-right font-mono text-gray-300">
-                {fmtCost(t.estimated_cost)}
-              </td>
-              <td className="px-4 py-3 text-right text-gray-500">
-                {fmtTime(t.timestamp)}
-              </td>
-            </tr>
+            <TraceRow key={t.id} trace={t} onOpen={openTrace} />
           ))}
           {traces.length === 0 && (
             <tr>

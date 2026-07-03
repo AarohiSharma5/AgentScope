@@ -6,7 +6,7 @@ JSON-serializable dicts (never ORM objects) so broadcasting is cheap and never
 triggers lazy database loads.
 """
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..utils.timeutils import utcnow
@@ -65,6 +65,11 @@ class Event:
     type: str
     data: dict
     timestamp: str
+    # Lazily-computed, cached wire encodings. A single broadcast event is
+    # delivered to every subscriber and serialized once per subscriber; caching
+    # collapses that to one json.dumps regardless of the fan-out size.
+    _sse: Optional[str] = field(default=None, repr=False, compare=False)
+    _json: Optional[str] = field(default=None, repr=False, compare=False)
 
     @property
     def topic(self) -> str:
@@ -75,16 +80,20 @@ class Event:
         return {"id": self.id, "type": self.type, "timestamp": self.timestamp, "data": self.data}
 
     def to_json(self) -> str:
-        """Serialize for a WebSocket text frame."""
-        return json.dumps(self.to_dict())
+        """Serialize for a WebSocket text frame (cached)."""
+        if self._json is None:
+            self._json = json.dumps(self.to_dict())
+        return self._json
 
     def to_sse(self) -> str:
-        """Serialize into the Server-Sent Events wire format."""
-        return (
-            f"id: {self.id}\n"
-            f"event: {self.type}\n"
-            f"data: {json.dumps(self.data)}\n\n"
-        )
+        """Serialize into the Server-Sent Events wire format (cached)."""
+        if self._sse is None:
+            self._sse = (
+                f"id: {self.id}\n"
+                f"event: {self.type}\n"
+                f"data: {json.dumps(self.data)}\n\n"
+            )
+        return self._sse
 
 
 def new_event(event_id: int, event_type: str, data: Optional[dict] = None) -> Event:
