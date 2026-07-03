@@ -161,12 +161,15 @@ def test_parallel_execution_runs_branches_and_groups_them(app_ctx):
 
 def test_parallel_branches_run_concurrently(app_ctx):
     engine = WorkflowEngine()
+    sleep_s = 0.2
 
     def slow(ctx):
-        time.sleep(0.15)
+        time.sleep(sleep_s)
         return "done"
 
-    spec = {
+    handlers = {"a": slow, "b": slow, "c": slow}
+
+    parallel_spec = {
         "entry": "fanout",
         "nodes": {
             "fanout": {"type": "parallel", "branches": ["a", "b", "c"], "next": "done"},
@@ -176,13 +179,35 @@ def test_parallel_branches_run_concurrently(app_ctx):
             "done": {"type": "end"},
         },
     }
-    started = time.perf_counter()
-    result = engine.run(spec, handlers={"a": slow, "b": slow, "c": slow})
-    elapsed = time.perf_counter() - started
+    # Same three tasks, but chained so they must run one after another. Both
+    # workflows share the same per-node overhead, so comparing them cancels out
+    # runner speed — the only difference is that the parallel version overlaps
+    # the sleeps. This is far more robust than an absolute wall-clock threshold
+    # (which flakes on slow/loaded CI runners, e.g. Windows).
+    serial_spec = {
+        "entry": "a",
+        "nodes": {
+            "a": {"type": "task", "role": "a", "next": "b"},
+            "b": {"type": "task", "role": "b", "next": "c"},
+            "c": {"type": "task", "role": "c", "next": "done"},
+            "done": {"type": "end"},
+        },
+    }
 
-    assert result.ok
-    # Concurrent: ~0.15s, not ~0.45s if serial.
-    assert elapsed < 0.4
+    started = time.perf_counter()
+    parallel_result = engine.run(parallel_spec, handlers=handlers)
+    parallel_elapsed = time.perf_counter() - started
+
+    started = time.perf_counter()
+    serial_result = engine.run(serial_spec, handlers=handlers)
+    serial_elapsed = time.perf_counter() - started
+
+    assert parallel_result.ok and serial_result.ok
+    # Concurrency must save real time: the parallel run overlaps the sleeps
+    # (~1x sleep_s) while the serial run pays for all three (~3x sleep_s). We
+    # require the parallel run to beat serial by at least one sleep interval,
+    # which the 2x sleep_s of overlap comfortably clears above scheduling noise.
+    assert parallel_elapsed < serial_elapsed - sleep_s
 
 
 # -- Conditional / branching / loops ---------------------------------------
