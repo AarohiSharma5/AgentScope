@@ -10,6 +10,12 @@ import Workflows from "./pages/Workflows.jsx";
 import WorkflowDetail from "./pages/WorkflowDetail.jsx";
 import Conversations from "./pages/Conversations.jsx";
 import ConversationDetail from "./pages/ConversationDetail.jsx";
+import Replays from "./pages/Replays.jsx";
+import ReplayDetail from "./pages/ReplayDetail.jsx";
+import Evaluations from "./pages/Evaluations.jsx";
+import EvaluationDetail from "./pages/EvaluationDetail.jsx";
+import Comparisons from "./pages/Comparisons.jsx";
+import Analytics from "./pages/Analytics.jsx";
 
 function NavItem({ to, label, end }) {
   return (
@@ -49,6 +55,10 @@ export default function App() {
               <NavItem to="/retrievals" label="RAG Observatory" />
               <NavItem to="/workflows" label="Workflows" />
               <NavItem to="/conversations" label="Conversations" />
+              <NavItem to="/replays" label="Replays" />
+              <NavItem to="/evaluations" label="Evaluations" />
+              <NavItem to="/comparisons" label="Comparisons" />
+              <NavItem to="/analytics" label="Analytics" />
             </nav>
           </div>
           <a
@@ -73,6 +83,12 @@ export default function App() {
           <Route path="/workflows/:id" element={<WorkflowDetail />} />
           <Route path="/conversations" element={<Conversations />} />
           <Route path="/conversations/:id" element={<ConversationDetail />} />
+          <Route path="/replays" element={<Replays />} />
+          <Route path="/replays/:id" element={<ReplayDetail />} />
+          <Route path="/evaluations" element={<Evaluations />} />
+          <Route path="/evaluations/:id" element={<EvaluationDetail />} />
+          <Route path="/comparisons" element={<Comparisons />} />
+          <Route path="/analytics" element={<Analytics />} />
         </Routes>
       </main>
     </div>

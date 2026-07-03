@@ -228,6 +228,55 @@ def get_evaluation_metrics() -> dict:
     }
 
 
+def get_evaluation_analytics() -> dict:
+    """Build daily time-series analytics plus headline rates for the dashboard.
+
+    Each evaluation run is bucketed by its creation date; per-day cost, tokens
+    and latency come from the evaluated conversations (reusing
+    ``conversation_totals``), alongside the average evaluation score and the
+    failure rate. The headline block reuses :func:`get_evaluation_metrics`.
+    """
+    runs = EvaluationRun.query.order_by(EvaluationRun.created_at.asc()).all()
+
+    buckets: dict[str, dict] = {}
+    for run in runs:
+        day = (run.created_at.date().isoformat() if run.created_at else "unknown")
+        bucket = buckets.setdefault(
+            day,
+            {"cost": 0.0, "tokens": 0, "latency_sum": 0.0, "latency_n": 0,
+             "scores": [], "evaluations": 0, "failures": 0},
+        )
+        totals = replay_service.conversation_totals(run.conversation_run_id)
+        bucket["cost"] += totals.get("cost") or 0.0
+        bucket["tokens"] += totals.get("total_tokens") or 0
+        if totals.get("latency_ms") is not None:
+            bucket["latency_sum"] += totals["latency_ms"]
+            bucket["latency_n"] += 1
+        if run.overall_score is not None:
+            bucket["scores"].append(run.overall_score)
+        bucket["evaluations"] += 1
+        if run.status == AgentStatus.FAILED:
+            bucket["failures"] += 1
+
+    daily = [
+        {
+            "date": day,
+            "cost": round(b["cost"], 6),
+            "tokens": b["tokens"],
+            "latency_ms": round(b["latency_sum"] / b["latency_n"], 2) if b["latency_n"] else None,
+            "evaluation_score": _mean(b["scores"], 4),
+            "evaluations": b["evaluations"],
+            "failures": b["failures"],
+            "failure_rate": round(b["failures"] / b["evaluations"], 4) if b["evaluations"] else 0.0,
+        }
+        for day, b in sorted(buckets.items())
+    ]
+
+    headline = get_evaluation_metrics()
+    headline["failure_rate"] = round(1 - headline["success_rate"], 4)
+    return {"daily": daily, "totals": headline}
+
+
 def _round(value: Optional[float], places: int) -> Optional[float]:
     """Round an optional number to ``places`` decimals, preserving None."""
     return round(value, places) if value is not None else None

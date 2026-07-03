@@ -360,3 +360,9 @@ def create_comparison():
 def evaluation_metrics():
     """Return aggregate evaluation metrics for the dashboard."""
     return jsonify(evaluation_service.get_evaluation_metrics())
+
+
+@evaluations_bp.get("/dashboard/evaluation-analytics")
+def evaluation_analytics():
+    """Return daily time-series analytics + headline rates for the dashboard."""
+    return jsonify(evaluation_service.get_evaluation_analytics())

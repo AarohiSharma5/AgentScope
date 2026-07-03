@@ -186,6 +186,20 @@ def test_evaluation_metrics_dashboard(client, conversation):
     assert data["average_cost"] is not None
 
 
+def test_evaluation_analytics_dashboard(client, conversation):
+    client.post("/api/evaluations", json={
+        "conversation_run_id": conversation, "reference": _ANSWER, "cost_budget": 1.0})
+    resp = client.get("/api/dashboard/evaluation-analytics")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "daily" in data and "totals" in data
+    assert len(data["daily"]) == 1
+    day = data["daily"][0]
+    for key in ("date", "cost", "tokens", "latency_ms", "evaluation_score", "failure_rate"):
+        assert key in day
+    assert data["totals"]["failure_rate"] == 0.0
+
+
 # -- Cross-cutting ----------------------------------------------------------
 
 
