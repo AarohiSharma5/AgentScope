@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
+from ..streaming import EventType, emit
 from ..models.agent_trace import (
     AgentRun,
     AgentStep,
@@ -88,6 +89,10 @@ def create_trace(data: dict) -> Trace:
     db.session.add(trace)
     db.session.commit()
     logger.debug("Created trace id=%s model=%s", trace.id, trace.model_name)
+    emit(
+        EventType.TRACE_STARTED,
+        trace_id=trace.id, model_name=trace.model_name, status=trace.status,
+    )
     return trace
 
 
@@ -112,6 +117,12 @@ def update_trace(trace_id: int, **fields) -> Optional[Trace]:
         trace.total_tokens = (trace.input_tokens or 0) + (trace.output_tokens or 0)
 
     db.session.commit()
+    # A terminal status marks the request finished; otherwise it's an update.
+    finished = fields.get("status") in (TraceStatus.SUCCESS, TraceStatus.FAILED)
+    emit(
+        EventType.TRACE_FINISHED if finished else EventType.TRACE_UPDATED,
+        trace_id=trace.id, status=trace.status,
+    )
     return trace
 
 
@@ -193,6 +204,11 @@ def create_agent_run(
     db.session.add(run)
     db.session.commit()
     logger.debug("Started agent run id=%s name=%s request_id=%s", run.id, agent_name, request_id)
+    emit(
+        EventType.AGENT_STARTED,
+        run_id=run.id, request_id=request_id, agent_name=agent_name,
+        agent_type=agent_type, parent_run_id=parent_run_id, status=run.status,
+    )
     return run
 
 
@@ -212,6 +228,11 @@ def finish_agent_run(
         run.run_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
     logger.debug("Finished agent run id=%s status=%s latency_ms=%s", run.id, status, run.latency_ms)
+    emit(
+        EventType.AGENT_FINISHED,
+        run_id=run.id, request_id=run.request_id, agent_name=run.agent_name,
+        status=run.status, latency_ms=run.latency_ms,
+    )
     return run
 
 
@@ -244,6 +265,11 @@ def create_agent_step(
     )
     db.session.add(step)
     db.session.commit()
+    emit(
+        EventType.STEP_STARTED,
+        step_id=step.id, agent_run_id=agent_run_id, step_type=step_type,
+        name=name, step_number=step.step_number, status=step.status,
+    )
     return step
 
 
@@ -271,6 +297,11 @@ def finish_agent_step(
     if metadata is not None:
         step.step_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
+    emit(
+        EventType.STEP_FINISHED,
+        step_id=step.id, agent_run_id=step.agent_run_id, step_type=step.step_type,
+        status=step.status, latency_ms=step.latency_ms,
+    )
     return step
 
 
@@ -284,6 +315,7 @@ def create_tool_execution(
     error_message: Optional[str] = None,
 ) -> ToolExecution:
     """Persist a tool/function call made during a step."""
+    emit(EventType.TOOL_STARTED, step_id=step_id, tool_name=tool_name)
     tool = ToolExecution(
         step_id=step_id,
         tool_name=tool_name,
@@ -295,6 +327,11 @@ def create_tool_execution(
     )
     db.session.add(tool)
     db.session.commit()
+    emit(
+        EventType.TOOL_FINISHED,
+        tool_id=tool.id, step_id=step_id, tool_name=tool_name,
+        status=status, latency_ms=latency_ms,
+    )
     return tool
 
 
@@ -308,6 +345,7 @@ def create_memory_access(
     latency_ms: Optional[float] = None,
 ) -> MemoryAccess:
     """Persist a memory read/lookup made during a step."""
+    emit(EventType.MEMORY_STARTED, step_id=step_id, memory_type=memory_type, query=query)
     memory = MemoryAccess(
         step_id=step_id,
         memory_type=memory_type,
@@ -319,6 +357,11 @@ def create_memory_access(
     )
     db.session.add(memory)
     db.session.commit()
+    emit(
+        EventType.MEMORY_FINISHED,
+        memory_id=memory.id, step_id=step_id, memory_type=memory_type,
+        similarity_score=similarity_score, used=used, latency_ms=latency_ms,
+    )
     return memory
 
 
@@ -331,6 +374,7 @@ def create_retriever_trace(
     num_documents: Optional[int] = None,
 ) -> RetrieverTrace:
     """Persist a retrieval (RAG) call made during a step."""
+    emit(EventType.RETRIEVER_STARTED, step_id=step_id, query=query)
     retrieved_documents = ensure_json_array(retrieved_documents, "retrieved_documents")
     if num_documents is None and retrieved_documents is not None:
         num_documents = len(retrieved_documents)
@@ -344,6 +388,11 @@ def create_retriever_trace(
     )
     db.session.add(retriever)
     db.session.commit()
+    emit(
+        EventType.RETRIEVER_FINISHED,
+        retriever_id=retriever.id, step_id=step_id, num_documents=num_documents,
+        embedding_time_ms=embedding_time_ms, retrieval_time_ms=retrieval_time_ms,
+    )
     return retriever
 
 

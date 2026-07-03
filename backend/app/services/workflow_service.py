@@ -20,6 +20,7 @@ from ..models.workflow_trace import (
     WorkflowDefinition,
     WorkflowExecution,
 )
+from ..streaming import EventType, emit
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.validation import ensure_json_object
@@ -51,6 +52,11 @@ def create_conversation_run(
         "Started conversation run id=%s name=%s request_trace_id=%s",
         conversation.id, conversation_name, request_trace_id,
     )
+    emit(
+        EventType.WORKFLOW_UPDATED,
+        conversation_run_id=conversation.id, conversation_name=conversation_name,
+        request_trace_id=request_trace_id, status=conversation.status, phase="started",
+    )
     return conversation
 
 
@@ -72,6 +78,11 @@ def finish_conversation_run(
     logger.debug(
         "Finished conversation run id=%s status=%s latency_ms=%s",
         conversation.id, status, conversation.latency_ms,
+    )
+    emit(
+        EventType.WORKFLOW_UPDATED,
+        conversation_run_id=conversation.id, status=conversation.status,
+        latency_ms=conversation.latency_ms, phase="finished",
     )
     return conversation
 
@@ -238,6 +249,11 @@ def finish_workflow_execution(
     logger.debug(
         "Finished workflow execution id=%s status=%s latency_ms=%s",
         execution.id, status, execution.latency_ms,
+    )
+    emit(
+        EventType.WORKFLOW_UPDATED,
+        workflow_execution_id=execution.id, conversation_run_id=execution.conversation_run_id,
+        status=execution.status, latency_ms=execution.latency_ms, phase="execution_finished",
     )
     return execution
 

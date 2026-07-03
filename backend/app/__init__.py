@@ -42,6 +42,24 @@ def _enable_sqlite_foreign_keys(app: Flask) -> None:
                 cursor.close()
 
 
+def _register_websocket(app: Flask) -> None:
+    """Register the v0.6 WebSocket endpoint (flask-sock), if available.
+
+    SSE has no extra dependency, so the app still boots and streams over
+    ``/api/stream`` even if flask-sock is not installed.
+    """
+    try:
+        from flask_sock import Sock
+
+        from .routes.stream import register_websocket
+    except ImportError:  # pragma: no cover - optional dependency
+        logging.getLogger("agentscope").warning(
+            "flask-sock not installed; WebSocket streaming disabled (SSE still available)"
+        )
+        return
+    register_websocket(Sock(app))
+
+
 def create_app(config_class: type[Config] = Config) -> Flask:
     """Create and configure a Flask application instance."""
     _configure_logging()
@@ -68,6 +86,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.rag import rag_bp
     from .routes.workflows import workflows_bp
     from .routes.evaluations import evaluations_bp
+    from .routes.stream import stream_bp
     from .middleware.logging import register_request_logging
 
     app.register_blueprint(traces_bp, url_prefix="/api")
@@ -76,6 +95,8 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(rag_bp, url_prefix="/api")
     app.register_blueprint(workflows_bp, url_prefix="/api")
     app.register_blueprint(evaluations_bp, url_prefix="/api")
+    app.register_blueprint(stream_bp, url_prefix="/api")
+    _register_websocket(app)
     register_request_logging(app)
     register_error_handlers(app)
 

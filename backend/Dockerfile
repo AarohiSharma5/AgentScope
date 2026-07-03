@@ -14,4 +14,8 @@ COPY . .
 EXPOSE 5001
 
 # Production WSGI server. run.py exposes `app = create_app()`.
-CMD ["gunicorn", "-b", "0.0.0.0:5001", "-w", "2", "--timeout", "60", "run:app"]
+# Threaded (gthread) workers so long-lived SSE/WebSocket streams (v0.6) each
+# hold a thread instead of an entire worker, and a higher timeout so streaming
+# connections are not reaped mid-stream. Backward compatible with all existing
+# REST endpoints.
+CMD ["gunicorn", "-b", "0.0.0.0:5001", "-k", "gthread", "-w", "2", "--threads", "16", "--timeout", "120", "run:app"]

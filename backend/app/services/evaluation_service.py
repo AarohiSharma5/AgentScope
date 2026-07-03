@@ -20,6 +20,7 @@ from ..extensions import db
 from ..models.agent_trace import AgentStatus
 from ..models.evaluation_trace import EvaluationMetric, EvaluationRun
 from ..services import replay_service
+from ..streaming import EventType, emit
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.validation import ensure_json_object
@@ -115,6 +116,12 @@ def finish_evaluation_run(
         run.evaluation_metadata = ensure_json_object(merged, "metadata")
     db.session.commit()
     logger.debug("Finished evaluation run id=%s status=%s score=%s", run.id, status, overall_score)
+    emit(
+        EventType.EVALUATION_FINISHED,
+        evaluation_run_id=run.id, conversation_run_id=run.conversation_run_id,
+        evaluation_type=run.evaluation_type, overall_score=run.overall_score,
+        status=run.status,
+    )
     return run
 
 
