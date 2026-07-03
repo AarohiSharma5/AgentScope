@@ -14,6 +14,7 @@ os.environ.setdefault(
 )
 
 from app import create_app  # noqa: E402
+from app.comparison import ModelComparisonEngine  # noqa: E402
 from app.evaluation import EvaluationEngine  # noqa: E402
 from app.extensions import db  # noqa: E402
 from app.orchestration import AgentOrchestrator, ReplayEngine  # noqa: E402
@@ -89,10 +90,21 @@ def main() -> int:
         assert future.result(timeout=10).ok
         evaluator.shutdown()
 
+        # -- Model comparison: run the workflow against multiple models ---------
+        cmp_engine = ModelComparisonEngine()
+        cmp = cmp_engine.compare(
+            original_id, ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"], evaluate=True,
+            reference="done", cost_budget=1.0,
+        )
+        assert cmp.summary["best_by"]["cost"] == "gpt-4o-mini", cmp.summary
+        assert len(cmp.comparison_ids) == 2
+        assert cmp.side_by_side["models"] == ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"]
+
         print("PostgreSQL v0.5 compatibility: OK")
         print(f"  original={original_id} replay_conv={result.replay_conversation_run_id}")
         print(f"  replay_cost={result.totals['cost']} comparison_winner={comparison.winner}")
         print(f"  eval_overall={eval_result.overall_score} metrics={len(stored_eval.metrics)}")
+        print(f"  comparison_winner={cmp.winner} models={cmp.side_by_side['models']}")
 
         # cleanup this run's original conversation (cascades to replay-produced rows
         # only where FK-linked; replay conversation is standalone, remove explicitly).
