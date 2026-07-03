@@ -14,9 +14,10 @@ os.environ.setdefault(
 )
 
 from app import create_app  # noqa: E402
+from app.evaluation import EvaluationEngine  # noqa: E402
 from app.extensions import db  # noqa: E402
 from app.orchestration import AgentOrchestrator, ReplayEngine  # noqa: E402
-from app.services import replay_service  # noqa: E402
+from app.services import evaluation_service, replay_service  # noqa: E402
 
 _SPEC = {
     "name": "pg-replay-flow",
@@ -74,9 +75,24 @@ def main() -> int:
         items, total = replay_service.list_replay_runs(original_conversation_run_id=original_id)
         assert total == 1
 
+        # -- Evaluation engine: rule-based scoring + async + persistence --------
+        evaluator = EvaluationEngine(judge=lambda prompt: 0.75, judge_model="judge-1")
+        eval_result = evaluator.evaluate(
+            original_id, reference="done", cost_budget=1.0, latency_budget_ms=10000
+        )
+        assert eval_result.ok and eval_result.overall_score is not None
+        stored_eval = evaluation_service.get_evaluation_run(eval_result.evaluation_run_id)
+        assert stored_eval.evaluation_type == "mixed"
+        assert len(stored_eval.metrics) == 11  # 10 rule-based + llm judge
+
+        future = evaluator.evaluate_async(original_id, cost_budget=1.0)
+        assert future.result(timeout=10).ok
+        evaluator.shutdown()
+
         print("PostgreSQL v0.5 compatibility: OK")
         print(f"  original={original_id} replay_conv={result.replay_conversation_run_id}")
         print(f"  replay_cost={result.totals['cost']} comparison_winner={comparison.winner}")
+        print(f"  eval_overall={eval_result.overall_score} metrics={len(stored_eval.metrics)}")
 
         # cleanup this run's original conversation (cascades to replay-produced rows
         # only where FK-linked; replay conversation is standalone, remove explicitly).
