@@ -1,10 +1,9 @@
 // Thin REST client for the AgentScope backend.
 const BASE = "/api";
 
-async function request(path) {
-  const res = await fetch(`${BASE}${path}`);
+// Surface the backend's consistent { error } envelope when available.
+async function unwrap(res) {
   if (!res.ok) {
-    // Surface the backend's consistent { error } envelope when available.
     let detail = `request failed (${res.status})`;
     try {
       const body = await res.json();
@@ -15,6 +14,20 @@ async function request(path) {
     throw new Error(detail);
   }
   return res.json();
+}
+
+async function request(path) {
+  return unwrap(await fetch(`${BASE}${path}`));
+}
+
+async function post(path, body = {}) {
+  return unwrap(
+    await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
 }
 
 function buildQuery(params = {}) {
@@ -53,4 +66,22 @@ export const api = {
   getConversation: (id) => request(`/conversations/${id}`),
   getMessages: (params) => request(`/messages${buildQuery(params)}`),
   getWorkflowMetrics: () => request("/dashboard/workflow-metrics"),
+
+  // v0.5 — replay, evaluation and model comparison
+  getReplays: (params) => request(`/replays${buildQuery(params)}`),
+  getReplay: (id) => request(`/replays/${id}`),
+  createReplay: (body) => post("/replays", body),
+  getEvaluations: (params) => request(`/evaluations${buildQuery(params)}`),
+  getEvaluation: (id) => request(`/evaluations/${id}`),
+  createEvaluation: (body) => post("/evaluations", body),
+  getComparisons: (params) => request(`/comparisons${buildQuery(params)}`),
+  createComparison: (body) => post("/comparisons", body),
+  getEvaluationMetrics: () => request("/dashboard/evaluation-metrics"),
+  getEvaluationAnalytics: () => request("/dashboard/evaluation-analytics"),
+
+  // v0.5 — prompt versions, prompt diff and trace diff
+  getPromptVersions: (params) => request(`/prompt-versions${buildQuery(params)}`),
+  getPromptVersion: (id) => request(`/prompt-versions/${id}`),
+  getPromptDiff: (a, b) => request(`/prompt-diff${buildQuery({ a, b })}`),
+  getTraceDiff: (a, b) => request(`/trace-diff${buildQuery({ a, b })}`),
 };

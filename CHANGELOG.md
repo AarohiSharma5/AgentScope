@@ -5,6 +5,70 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-03
+
+Adds **replay, evaluation and model comparison** — re-run any traced
+conversation under new parameters, score it with pluggable evaluators, compare
+one workflow across many models, and diff prompts and traces. Built additively
+on the v0.1–v0.4 tracing layers, with full backward compatibility.
+
+### Added
+
+- **Evaluation data model** (`evaluation_trace.py`): `ReplayRun`,
+  `PromptVersion`, `EvaluationRun`, `EvaluationMetric` and `ModelComparison`,
+  with relationships, cascade deletes and composite indexes.
+- **Replay Engine** (`orchestration/replay_engine.py`): rebuilds a portable
+  snapshot of a traced conversation and re-runs it via the Multi-Agent SDK,
+  faithfully reusing workflow, agents, prompts, memory, retrieved documents and
+  tool calls — while overriding model, temperature, `top_p`, system prompt,
+  memory or tools. Runs **mock** (deterministic, cost re-estimated) or **live**
+  (caller-supplied agent/tool handlers). Records a `ReplayRun` and can compare
+  original vs replay.
+- **Evaluation Engine** (`evaluation/`): pluggable `Evaluator` interface with 10
+  built-in rule-based metrics (correctness, groundedness, faithfulness, context
+  precision/recall, answer relevance, tool success, memory usage, latency and
+  cost scores), an injectable **LLM-as-a-Judge**, and **custom** evaluators —
+  with weighted overall scoring and synchronous / asynchronous execution.
+- **Model Comparison Engine** (`comparison/`): runs one workflow against many
+  models (replay + optional evaluation per model), stores pairwise
+  `ModelComparison` records, and produces a ranking summary and side-by-side
+  matrix. Provider-agnostic (model names are opaque strings).
+- **Automatic prompt versioning + diffs** (`services/prompt_service.py`,
+  `services/diff_service.py`): every assembled prompt is captured as a hashed,
+  de-duplicated `PromptVersion`; word-level **prompt diffs** and full **trace
+  diffs** (steps, tools, memory, retriever, latency, cost, tokens) power a
+  side-by-side Diffs UI.
+- **REST API**: `GET/POST /api/replays`, `GET /api/replays/:id`,
+  `GET/POST /api/evaluations`, `GET /api/evaluations/:id`,
+  `GET/POST /api/comparisons`, `GET /api/prompt-versions[/:id]`,
+  `GET /api/prompt-diff`, `GET /api/trace-diff`,
+  `GET /api/dashboard/evaluation-metrics`,
+  `GET /api/dashboard/evaluation-analytics`.
+- **Frontend**: Replays (list + detail with original-vs-replay diff),
+  Evaluations (overall score, metric cards, radar chart, score history),
+  Comparisons (side-by-side + winner), a Diffs page (split/unified prompt diff
+  and trace diff), and an Analytics dashboard (daily cost / latency / tokens /
+  evaluation score / failure rate) — with reusable Bar / Line / Radar charts.
+
+### Changed
+
+- Extended the frontend API client with a POST helper and the v0.5 endpoints;
+  the navigation now wraps gracefully as sections grew.
+- Reused the replay snapshot + conversation totals across the comparison and
+  diff services, avoiding duplicated trace-reconstruction/aggregation logic.
+
+### Tests
+
+- Backend: replay engine (same/different model, temperature, system prompt,
+  memory, mock & live tools, comparison), evaluation engine (all metrics,
+  weighting, LLM-judge, custom, async, errors), comparison engine (multi-model,
+  pairwise records, summary/side-by-side, provider-agnostic), prompt versioning
+  and prompt/trace diff, and the full v0.5 REST API.
+- Frontend: Vitest suites for the chart primitives, eval/diff components and the
+  Diffs page (mocked client).
+- Verified SQLite **and** PostgreSQL compatibility (`scripts/check_pg_v05.py`,
+  now covering prompt/trace diff) and the full **Docker** stack end-to-end.
+
 ## [0.4.0] - 2026-07-01
 
 Adds **multi-agent workflow orchestration** — coordinate collaborating agents,
@@ -154,6 +218,7 @@ First MVP release of **AgentScope** — the AI Request Tracer.
   backend (gunicorn), and the React frontend (nginx) together.
 - **Documentation**: README, architecture diagram, screenshots, and seed script.
 
+[0.5.0]: https://github.com/your-org/agentscope/releases/tag/v0.5.0
 [0.4.0]: https://github.com/your-org/agentscope/releases/tag/v0.4.0
 [0.3.0]: https://github.com/your-org/agentscope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/your-org/agentscope/releases/tag/v0.2.0
