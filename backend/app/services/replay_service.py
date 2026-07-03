@@ -18,6 +18,8 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
+from sqlalchemy import or_
+
 from ..extensions import db
 from ..models.agent_trace import AgentRun, AgentStatus, AgentStep
 from ..models.evaluation_trace import ModelComparison, ReplayRun
@@ -109,9 +111,13 @@ def list_replay_runs(
     limit: int = 20,
     original_conversation_run_id: Optional[int] = None,
     status: Optional[str] = None,
+    q: Optional[str] = None,
     sort: str = "-created_at",
 ) -> tuple[list[ReplayRun], int]:
-    """Return a page of replay runs and the total matching count."""
+    """Return a page of replay runs and the total matching count.
+
+    ``q`` performs a case-insensitive search on the replayed model name.
+    """
     query = ReplayRun.query
     if original_conversation_run_id is not None:
         query = query.filter(
@@ -119,6 +125,8 @@ def list_replay_runs(
         )
     if status is not None:
         query = query.filter(ReplayRun.status == status)
+    if q:
+        query = query.filter(ReplayRun.replayed_model.ilike(f"%{q}%"))
     total = query.count()
     query = apply_sort(query, sort, _REPLAY_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
@@ -173,6 +181,47 @@ def list_model_comparisons(
     if conversation_run_id is not None:
         query = query.filter(ModelComparison.conversation_run_id == conversation_run_id)
     return query.order_by(ModelComparison.created_at.desc()).all()
+
+
+COMPARISON_SORTABLE = {
+    "created_at", "cost_difference", "latency_difference", "token_difference"
+}
+_COMPARISON_SORT_COLUMNS = {name: getattr(ModelComparison, name) for name in COMPARISON_SORTABLE}
+
+
+def is_valid_comparison_sort(sort: str) -> bool:
+    """Return True if ``sort`` targets an allowed comparison field."""
+    return is_valid_sort(sort, COMPARISON_SORTABLE)
+
+
+def list_comparisons(
+    page: int = 1,
+    limit: int = 20,
+    conversation_run_id: Optional[int] = None,
+    q: Optional[str] = None,
+    sort: str = "-created_at",
+) -> tuple[list[ModelComparison], int]:
+    """Return a page of model comparisons and the total matching count.
+
+    ``q`` performs a case-insensitive search across the two model names and the
+    winner label.
+    """
+    query = ModelComparison.query
+    if conversation_run_id is not None:
+        query = query.filter(ModelComparison.conversation_run_id == conversation_run_id)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                ModelComparison.model_a.ilike(like),
+                ModelComparison.model_b.ilike(like),
+                ModelComparison.winner.ilike(like),
+            )
+        )
+    total = query.count()
+    query = apply_sort(query, sort, _COMPARISON_SORT_COLUMNS)
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
 
 
 # -- Aggregation ------------------------------------------------------------

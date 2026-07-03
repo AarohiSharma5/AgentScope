@@ -115,7 +115,9 @@ class ModelComparisonEngine:
         by_model = {p["model"]: p for p in profiles}
         baseline = by_model[baseline_model]
         comparison_ids = [
-            comparison_service.record_pair(baseline, variant).id
+            comparison_service.record_pair(
+                baseline, variant, conversation_run_id=conversation_run_id
+            ).id
             for variant in profiles
             if variant["model"] != baseline_model
         ]

@@ -11,9 +11,11 @@ import logging
 from datetime import datetime
 from typing import Iterable, Optional
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 
 from ..evaluation.context import EvaluationContext, MetricResult
+from ..evaluation.evaluators import Metrics
 from ..extensions import db
 from ..models.agent_trace import AgentStatus
 from ..models.evaluation_trace import EvaluationMetric, EvaluationRun
@@ -141,9 +143,14 @@ def list_evaluation_runs(
     conversation_run_id: Optional[int] = None,
     evaluation_type: Optional[str] = None,
     status: Optional[str] = None,
+    q: Optional[str] = None,
     sort: str = "-created_at",
 ) -> tuple[list[EvaluationRun], int]:
-    """Return a page of evaluation runs (with metrics) and the total count."""
+    """Return a page of evaluation runs (with metrics) and the total count.
+
+    ``q`` performs a case-insensitive search across the evaluation type and the
+    (judge) model name.
+    """
     query = EvaluationRun.query.options(selectinload(EvaluationRun.metrics))
     if conversation_run_id is not None:
         query = query.filter(EvaluationRun.conversation_run_id == conversation_run_id)
@@ -151,10 +158,84 @@ def list_evaluation_runs(
         query = query.filter(EvaluationRun.evaluation_type == evaluation_type)
     if status is not None:
         query = query.filter(EvaluationRun.status == status)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                EvaluationRun.evaluation_type.ilike(like),
+                EvaluationRun.model_name.ilike(like),
+            )
+        )
     total = query.count()
     query = apply_sort(query, sort, _EVALUATION_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
     return items, total
+
+
+# -- Dashboard aggregation --------------------------------------------------
+
+
+def get_evaluation_metrics() -> dict:
+    """Aggregate evaluation metrics for the dashboard.
+
+    Returns average overall score, average conversation cost/latency (over the
+    evaluated conversations), the average of key per-metric scores (correctness,
+    faithfulness, groundedness, tool accuracy, memory usage) and the evaluation
+    success rate.
+    """
+    total = db.session.query(func.count(EvaluationRun.id)).scalar() or 0
+    success = (
+        db.session.query(func.count(EvaluationRun.id))
+        .filter(EvaluationRun.status == AgentStatus.SUCCESS)
+        .scalar()
+        or 0
+    )
+    avg_score = db.session.query(func.avg(EvaluationRun.overall_score)).scalar()
+
+    metric_rows = (
+        db.session.query(
+            EvaluationMetric.metric_name, func.avg(EvaluationMetric.metric_value)
+        )
+        .group_by(EvaluationMetric.metric_name)
+        .all()
+    )
+    by_metric = {name: _round(value, 4) for name, value in metric_rows}
+
+    conversation_ids = [
+        row[0]
+        for row in db.session.query(EvaluationRun.conversation_run_id).distinct().all()
+    ]
+    costs: list[float] = []
+    latencies: list[float] = []
+    for conversation_id in conversation_ids:
+        totals = replay_service.conversation_totals(conversation_id)
+        if totals.get("cost") is not None:
+            costs.append(totals["cost"])
+        if totals.get("latency_ms") is not None:
+            latencies.append(totals["latency_ms"])
+
+    return {
+        "total_evaluations": total,
+        "average_evaluation_score": _round(avg_score, 4),
+        "average_cost": _mean(costs, 6),
+        "average_latency": _mean(latencies, 4),
+        "average_correctness": by_metric.get(Metrics.CORRECTNESS),
+        "average_faithfulness": by_metric.get(Metrics.FAITHFULNESS),
+        "average_groundedness": by_metric.get(Metrics.GROUNDEDNESS),
+        "average_tool_accuracy": by_metric.get(Metrics.TOOL_SUCCESS),
+        "average_memory_usage": by_metric.get(Metrics.MEMORY_USAGE),
+        "success_rate": round(success / total, 4) if total else 0.0,
+    }
+
+
+def _round(value: Optional[float], places: int) -> Optional[float]:
+    """Round an optional number to ``places`` decimals, preserving None."""
+    return round(value, places) if value is not None else None
+
+
+def _mean(values: list[float], places: int) -> Optional[float]:
+    """Mean of a list, rounded, or None when empty."""
+    return round(sum(values) / len(values), places) if values else None
 
 
 # -- Evaluation context -----------------------------------------------------

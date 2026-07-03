@@ -97,6 +97,7 @@ def variant_profile(
 def record_pair(
     baseline: dict,
     variant: dict,
+    conversation_run_id: Optional[int] = None,
     winner: Optional[str] = None,
     reason: Optional[str] = None,
 ) -> ModelComparison:
@@ -104,6 +105,8 @@ def record_pair(
 
     Differences are ``baseline`` minus ``variant``. When ``winner`` is not given
     it is chosen by higher evaluation score, then lower cost, then lower latency.
+    ``conversation_run_id`` anchors the record (defaults to the baseline
+    variant's conversation) — the engine anchors it to the source conversation.
     """
     cost_diff = _sub(baseline.get("cost"), variant.get("cost"))
     latency_diff = _sub(baseline.get("latency_ms"), variant.get("latency_ms"))
@@ -114,7 +117,7 @@ def record_pair(
         winner, reason = _decide_winner(baseline, variant, cost_diff, latency_diff, reason)
 
     return replay_service.create_model_comparison(
-        conversation_run_id=baseline["conversation_run_id"],
+        conversation_run_id=conversation_run_id or baseline["conversation_run_id"],
         model_a=baseline.get("model"),
         model_b=variant.get("model"),
         winner=winner,
