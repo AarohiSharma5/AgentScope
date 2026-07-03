@@ -88,6 +88,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.evaluations import evaluations_bp
     from .routes.stream import stream_bp
     from .routes.plugins import plugins_bp
+    from .routes.providers import providers_bp
     from .middleware.logging import register_request_logging
 
     app.register_blueprint(traces_bp, url_prefix="/api")
@@ -98,6 +99,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(evaluations_bp, url_prefix="/api")
     app.register_blueprint(stream_bp, url_prefix="/api")
     app.register_blueprint(plugins_bp, url_prefix="/api")
+    app.register_blueprint(providers_bp, url_prefix="/api")
     _register_websocket(app)
     register_request_logging(app)
     register_error_handlers(app)
