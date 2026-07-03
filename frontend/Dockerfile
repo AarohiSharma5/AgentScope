@@ -1,5 +1,5 @@
 # --- Build stage: compile the React app ---
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 
 WORKDIR /app
 COPY package*.json ./
