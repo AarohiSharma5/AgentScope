@@ -11,3 +11,17 @@ body,
 body {
   @apply bg-ink-900 text-gray-200 antialiased;
 }
+
+/* Brief highlight applied to a live table row / graph node when it updates. */
+@keyframes live-flash {
+  0% {
+    background-color: rgba(99, 102, 241, 0.22);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.live-flash {
+  animation: live-flash 1.1s ease-out;
+}

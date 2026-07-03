@@ -301,6 +301,9 @@ def finish_agent_step(
         EventType.STEP_FINISHED,
         step_id=step.id, agent_run_id=step.agent_run_id, step_type=step.step_type,
         status=step.status, latency_ms=step.latency_ms,
+        # Additive: carry token usage + cost so live dashboards can aggregate
+        # them without an extra fetch (no existing field is changed).
+        token_usage=step.token_usage, cost=step.cost,
     )
     return step
 
