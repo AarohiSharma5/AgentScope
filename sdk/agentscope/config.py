@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import List, Optional
+from typing import Optional
 
 from .errors import ConfigurationError
 

@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Union
 
 from .base import (

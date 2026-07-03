@@ -15,7 +15,7 @@ from ..auth import keys, tokens
 from ..auth.errors import AuthError, AuthzError
 from ..auth.roles import Role, is_valid_role, role_satisfies
 from ..extensions import db
-from ..models.auth import ApiKey, AuditLog, Membership, Organization, Project, User
+from ..models.auth import ApiKey, Membership, Organization, Project, User
 from ..utils.timeutils import utcnow
 
 logger = logging.getLogger("agentscope")

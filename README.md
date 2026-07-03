@@ -2,6 +2,8 @@
 
 **Chrome DevTools for AI applications.** AgentScope is an open-source developer tool for observing and debugging LLM-powered apps.
 
+[![CI](https://github.com/AarohiSharma5/AgentScope/actions/workflows/ci.yml/badge.svg)](https://github.com/AarohiSharma5/AgentScope/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/AarohiSharma5/AgentScope/actions/workflows/codeql.yml/badge.svg)](https://github.com/AarohiSharma5/AgentScope/actions/workflows/codeql.yml)
 ![Version](https://img.shields.io/badge/version-1.0.0-6366f1)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Backend](https://img.shields.io/badge/backend-Flask-000000)
@@ -32,6 +34,7 @@ an [FAQ](docs/faq.md) and [Troubleshooting](docs/troubleshooting.md).
 
 - **New here?** [Getting Started](docs/getting-started.md) → [Installation](docs/installation.md) → [Quick Start](docs/quickstart.md)
 - **Reference:** [REST API](docs/reference/rest-api.md) · [SDK](docs/reference/sdk.md) · [CLI](docs/reference/cli.md) · [Architecture](docs/reference/architecture.md)
+- **Operations:** [Deployment](docs/deployment.md) · [Docker](docs/docker.md) · [CI/CD](docs/ci-cd.md)
 
 ---
 

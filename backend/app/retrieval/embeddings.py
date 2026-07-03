@@ -29,7 +29,8 @@ class HashingEmbeddingProvider(EmbeddingProvider):
     def embed(self, text: str) -> EmbeddingResult:
         vector = [0.0] * self.dimension
         for token in (text or "").lower().split():
-            digest = hashlib.md5(token.encode("utf-8")).digest()
+            # Non-cryptographic feature hashing (deterministic token buckets).
+            digest = hashlib.md5(token.encode("utf-8"), usedforsecurity=False).digest()
             index = int.from_bytes(digest[:4], "big") % self.dimension
             sign = 1.0 if digest[4] % 2 == 0 else -1.0
             vector[index] += sign

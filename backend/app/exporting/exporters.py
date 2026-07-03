@@ -16,7 +16,6 @@ import sqlite3
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from . import collect
 from .bundle import BundleKind, ExportFormat

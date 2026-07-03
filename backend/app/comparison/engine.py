@@ -18,7 +18,7 @@ names are opaque strings, so the design stays provider-agnostic. Must be used
 inside a Flask application context.
 """
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from ..evaluation.engine import EvaluationEngine
 from ..orchestration.replay_engine import ReplayEngine

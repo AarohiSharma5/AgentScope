@@ -1,0 +1,251 @@
+name: CI
+
+# Continuous integration: lint, format, security scan, tests + coverage across
+# Linux/macOS/Windows, a frontend build, and Docker image builds. Test failures
+# fail the build; dependency/format audits are advisory (reported as artifacts).
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"] # tag pushes are handled by release.yml
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_DEFAULT: "3.12"
+
+jobs:
+  # --------------------------------------------------------------------- lint
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install tooling
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Lint (ruff check)
+        run: ruff check backend sdk
+
+      - name: Formatting (ruff format --check, advisory)
+        continue-on-error: true
+        run: ruff format --check --diff backend sdk
+
+  # ----------------------------------------------------------------- security
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install tooling
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Bandit (gate on high severity + high confidence)
+        run: bandit -r backend/app sdk/agentscope --severity-level high --confidence-level high
+
+      - name: Bandit (full report, advisory)
+        continue-on-error: true
+        run: bandit -r backend/app sdk/agentscope -f json -o bandit-report.json --exit-zero
+
+      - name: pip-audit (dependency vulnerabilities, advisory)
+        continue-on-error: true
+        run: pip-audit -r backend/requirements.txt --format=json --output pip-audit-report.json
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            pip-audit-report.json
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------- backend tests
+  backend-tests:
+    name: Backend tests (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: backend/coverage.xml
+          if-no-files-found: ignore
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ----------------------------------------------------------------- sdk tests
+  sdk-tests:
+    name: SDK tests (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: sdk/pyproject.toml
+
+      - name: Install SDK + test tooling
+        working-directory: sdk
+        run: |
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage
+        working-directory: sdk
+        run: pytest --cov=agentscope --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: sdk/coverage.xml
+          flags: sdk
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ------------------------------------------------------------------ frontend
+  frontend:
+    name: Frontend build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+
+  # -------------------------------------------------------------- docker build
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          tags: agentscope-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: agentscope-frontend:ci
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ---------------------------------------------------------------- CI summary
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [lint, security, backend-tests, sdk-tests, frontend, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required jobs passed
+        run: |
+          echo "lint=${{ needs.lint.result }}"
+          echo "security=${{ needs.security.result }}"
+          echo "backend-tests=${{ needs.backend-tests.result }}"
+          echo "sdk-tests=${{ needs.sdk-tests.result }}"
+          echo "frontend=${{ needs.frontend.result }}"
+          echo "docker=${{ needs.docker.result }}"
+          test "${{ needs.lint.result }}" = "success" &&
+          test "${{ needs.security.result }}" = "success" &&
+          test "${{ needs.backend-tests.result }}" = "success" &&
+          test "${{ needs.sdk-tests.result }}" = "success" &&
+          test "${{ needs.frontend.result }}" = "success" &&
+          test "${{ needs.docker.result }}" = "success"

@@ -32,6 +32,7 @@ This is the complete documentation. If you are new, start with
 ### Operations
 - [Deployment](deployment.md) — production deployment, config, auth, scaling.
 - [Docker](docker.md) — the containerized stack in depth.
+- [CI/CD](ci-cd.md) — GitHub Actions pipelines: tests, lint, security, releases.
 
 ### Help
 - [Examples](../examples/README.md) — runnable example programs.

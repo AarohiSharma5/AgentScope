@@ -5,7 +5,6 @@ platform's existing retrieval interfaces (``EmbeddingProvider``/``VectorStore``)
 for the retriever, and provides dependency-free callable adapters for memory and
 an LLM provider — proving there are no hardcoded providers.
 """
-from typing import Optional
 
 from ...retrieval.embeddings import HashingEmbeddingProvider
 from ...retrieval.vector_stores import InMemoryVectorStore
