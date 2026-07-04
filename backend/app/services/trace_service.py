@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, cast, func, or_
+from sqlalchemy import String, case, cast, func, or_
 from sqlalchemy.orm import selectinload
 
 from ..extensions import db
@@ -26,6 +26,7 @@ from ..models.agent_trace import (
     RetrieverTrace,
 )
 from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
+from ..utils.cache import cached
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.tokens import estimate_tokens
@@ -141,10 +142,25 @@ def get_trace(trace_id: int) -> Optional[Trace]:
     return db.session.get(Trace, trace_id)
 
 
+@cached()
 def get_stats() -> dict:
-    """Compute aggregate dashboard metrics across all traces."""
-    total_requests = db.session.query(func.count(Trace.id)).scalar() or 0
+    """Compute aggregate dashboard metrics across all traces.
 
+    All aggregates are computed in a single round-trip and the result is cached
+    for a few seconds (``METRICS_CACHE_TTL``) so a burst of concurrent dashboard
+    loads collapses into one query instead of one query per widget per request.
+    """
+    total_requests, avg_latency, avg_tokens, avg_cost, success_count = (
+        db.session.query(
+            func.count(Trace.id),
+            func.avg(Trace.latency_ms),
+            func.avg(Trace.total_tokens),
+            func.avg(Trace.estimated_cost),
+            func.sum(case((Trace.status == TraceStatus.SUCCESS, 1), else_=0)),
+        ).one()
+    )
+
+    total_requests = total_requests or 0
     if total_requests == 0:
         return {
             "total_requests": 0,
@@ -154,22 +170,12 @@ def get_stats() -> dict:
             "success_rate": 0,
         }
 
-    avg_latency = db.session.query(func.avg(Trace.latency_ms)).scalar() or 0
-    avg_tokens = db.session.query(func.avg(Trace.total_tokens)).scalar() or 0
-    avg_cost = db.session.query(func.avg(Trace.estimated_cost)).scalar() or 0
-    success_count = (
-        db.session.query(func.count(Trace.id))
-        .filter(Trace.status == TraceStatus.SUCCESS)
-        .scalar()
-        or 0
-    )
-
     return {
         "total_requests": total_requests,
-        "avg_latency_ms": round(float(avg_latency), 2),
-        "avg_tokens": round(float(avg_tokens), 2),
-        "avg_cost": round(float(avg_cost), 6),
-        "success_rate": round(success_count / total_requests * 100, 2),
+        "avg_latency_ms": round(float(avg_latency or 0), 2),
+        "avg_tokens": round(float(avg_tokens or 0), 2),
+        "avg_cost": round(float(avg_cost or 0), 6),
+        "success_rate": round((success_count or 0) / total_requests * 100, 2),
     }
 
 
@@ -510,10 +516,22 @@ def list_agent_runs_for_request(request_id: int) -> list[AgentRun]:
     )
 
 
+@cached()
 def get_agent_metrics() -> dict:
-    """Compute aggregate dashboard metrics across all agent runs."""
-    total_runs = db.session.query(func.count(AgentRun.id)).scalar() or 0
+    """Compute aggregate dashboard metrics across all agent runs.
 
+    Run-level aggregates (count, latency, success) and step aggregates (count,
+    cost) are each computed in a single query; the remaining child-table counts
+    are unavoidably separate tables. The whole result is cached for a few
+    seconds to absorb concurrent dashboard traffic.
+    """
+    total_runs, avg_latency, success_runs = db.session.query(
+        func.count(AgentRun.id),
+        func.avg(AgentRun.latency_ms),
+        func.sum(case((AgentRun.status == AgentStatus.SUCCESS, 1), else_=0)),
+    ).one()
+
+    total_runs = total_runs or 0
     if total_runs == 0:
         return {
             "total_agent_runs": 0,
@@ -526,18 +544,15 @@ def get_agent_metrics() -> dict:
             "success_rate": 0,
         }
 
-    avg_latency = db.session.query(func.avg(AgentRun.latency_ms)).scalar() or 0
-    total_steps = db.session.query(func.count(AgentStep.id)).scalar() or 0
-    total_tools = db.session.query(func.count(ToolExecution.id)).scalar() or 0
+    avg_latency = avg_latency or 0
+    success_runs = success_runs or 0
+    total_steps, total_cost = db.session.query(
+        func.count(AgentStep.id),
+        func.coalesce(func.sum(AgentStep.cost), 0.0),
+    ).one()
     total_memory = db.session.query(func.count(MemoryAccess.id)).scalar() or 0
+    total_tools = db.session.query(func.count(ToolExecution.id)).scalar() or 0
     total_retrievals = db.session.query(func.count(RetrieverTrace.id)).scalar() or 0
-    total_cost = db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0)).scalar() or 0
-    success_runs = (
-        db.session.query(func.count(AgentRun.id))
-        .filter(AgentRun.status == AgentStatus.SUCCESS)
-        .scalar()
-        or 0
-    )
 
     return {
         "total_agent_runs": total_runs,
@@ -891,10 +906,25 @@ def get_prompt_assembly(prompt_id: int) -> Optional[PromptAssembly]:
     return db.session.get(PromptAssembly, prompt_id)
 
 
+@cached()
 def get_rag_metrics() -> dict:
-    """Compute aggregate RAG metrics across all retrievals."""
-    total_retrievals = db.session.query(func.count(RetrieverTrace.id)).scalar() or 0
+    """Compute aggregate RAG metrics across all retrievals.
 
+    Aggregates over the same table are collapsed into one query each; the result
+    is cached for a few seconds to absorb concurrent dashboard traffic.
+    """
+    # Retriever-table aggregates in a single pass.
+    total_retrievals, avg_docs_retrieved, avg_retrieval_latency, successful = (
+        db.session.query(
+            func.count(RetrieverTrace.id),
+            func.avg(RetrieverTrace.num_documents),
+            func.avg(RetrieverTrace.retrieval_time_ms),
+            # "Success" = a retrieval that returned at least one document.
+            func.sum(case((RetrieverTrace.num_documents > 0, 1), else_=0)),
+        ).one()
+    )
+
+    total_retrievals = total_retrievals or 0
     if total_retrievals == 0:
         return {
             "total_retrievals": 0,
@@ -908,27 +938,25 @@ def get_rag_metrics() -> dict:
             "success_rate": 0,
         }
 
-    avg_similarity = db.session.query(func.avg(RetrievedDocument.similarity_score)).scalar() or 0
-    avg_docs_retrieved = db.session.query(func.avg(RetrieverTrace.num_documents)).scalar() or 0
-    selected_docs = (
-        db.session.query(func.count(RetrievedDocument.id))
-        .filter(RetrievedDocument.selected.is_(True))
-        .scalar()
-        or 0
-    )
-    avg_embedding_latency = db.session.query(func.avg(EmbeddingTrace.latency_ms)).scalar() or 0
-    avg_retrieval_latency = db.session.query(func.avg(RetrieverTrace.retrieval_time_ms)).scalar() or 0
+    avg_docs_retrieved = avg_docs_retrieved or 0
+    avg_retrieval_latency = avg_retrieval_latency or 0
+    successful = successful or 0
+
+    avg_similarity, selected_docs = db.session.query(
+        func.avg(RetrievedDocument.similarity_score),
+        func.sum(case((RetrievedDocument.selected.is_(True), 1), else_=0)),
+    ).one()
+    avg_similarity = avg_similarity or 0
+    selected_docs = selected_docs or 0
+
+    avg_embedding_latency, total_embedding_cost = db.session.query(
+        func.avg(EmbeddingTrace.latency_ms),
+        func.coalesce(func.sum(EmbeddingTrace.cost), 0.0),
+    ).one()
+    avg_embedding_latency = avg_embedding_latency or 0
+    total_embedding_cost = total_embedding_cost or 0
+
     avg_prompt_size = db.session.query(func.avg(PromptAssembly.total_tokens)).scalar() or 0
-    total_embedding_cost = (
-        db.session.query(func.coalesce(func.sum(EmbeddingTrace.cost), 0.0)).scalar() or 0
-    )
-    # "Success" = a retrieval that returned at least one document.
-    successful = (
-        db.session.query(func.count(RetrieverTrace.id))
-        .filter(RetrieverTrace.num_documents > 0)
-        .scalar()
-        or 0
-    )
 
     return {
         "total_retrievals": total_retrievals,
