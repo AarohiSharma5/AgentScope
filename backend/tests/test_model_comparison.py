@@ -104,12 +104,26 @@ def test_compare_summary_and_side_by_side(conversation):
 
 def test_compare_with_evaluation(conversation):
     engine = ModelComparisonEngine()
+    # Use very generous latency/cost budgets so the latency- and cost-score
+    # metrics saturate to 1.0 for every model. Otherwise the latency score is
+    # derived from each replay's *wall-clock* latency (which varies run to run),
+    # the overall scores no longer tie, and the winner flips non-deterministically
+    # on loaded CI runners. With those noisy metrics neutralized, every model
+    # replays the same answer/context and scores exactly equal — so the winner is
+    # decided by the deterministic cost tiebreak (cheapest = gpt-4o-mini).
     result = engine.compare(
-        conversation, _MODELS, evaluate=True, reference=_ANSWER, cost_budget=1.0
+        conversation,
+        _MODELS,
+        evaluate=True,
+        reference=_ANSWER,
+        latency_budget_ms=1_000_000_000,
+        cost_budget=1_000_000_000,
     )
     for profile in result.profiles:
         assert profile["evaluation_score"] is not None
     # Equal scores across models -> winner decided by cost (cheapest).
+    scores = {p["model"]: p["evaluation_score"] for p in result.profiles}
+    assert len(set(scores.values())) == 1, f"expected tied scores, got {scores}"
     assert result.winner == "gpt-4o-mini"
 
 
