@@ -41,7 +41,7 @@ python examples/09_auth_api_keys.py
 ```
 
 Override the server URL with `AGENTSCOPE_ENDPOINT` (default
-`http://localhost:5001`).
+`http://localhost:8000`).
 
 ## Running the backend examples
 

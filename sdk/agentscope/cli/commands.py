@@ -62,7 +62,7 @@ def _rows(payload):
 
 def _wizard(args, ctx: Context, *, interactive: bool) -> None:
     c, s = ctx.console, ctx.settings
-    endpoint_default = s.endpoint or "http://localhost:5001"
+    endpoint_default = s.endpoint or "http://localhost:8000"
     if interactive:
         c.heading("AgentScope setup")
         endpoint = args.endpoint or c.ask("Server endpoint", endpoint_default)

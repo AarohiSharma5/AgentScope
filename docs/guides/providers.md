@@ -55,10 +55,10 @@ Static, credential-free discovery is available via class attributes: `name`,
 ## Discover providers over REST
 
 ```bash
-curl http://localhost:5001/api/providers                 # list + info
-curl http://localhost:5001/api/providers/capabilities    # capability matrix
-curl http://localhost:5001/api/providers/openai          # one provider's info
-curl http://localhost:5001/api/providers/openai/health   # reachability/health
+curl http://localhost:8000/api/providers                 # list + info
+curl http://localhost:8000/api/providers/capabilities    # capability matrix
+curl http://localhost:8000/api/providers/openai          # one provider's info
+curl http://localhost:8000/api/providers/openai/health   # reachability/health
 ```
 
 ## Add a provider without touching core code

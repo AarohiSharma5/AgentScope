@@ -11,7 +11,7 @@ import os
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:5001").rstrip("/")
+BASE = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:8000").rstrip("/")
 
 
 def _request(method: str, path: str, body: dict | None = None) -> dict:

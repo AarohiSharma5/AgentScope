@@ -26,7 +26,7 @@ docker compose up -d --build
 | Service | URL |
 | ------- | --- |
 | Frontend (dashboard) | http://localhost:8080 |
-| Backend API | http://localhost:5001/api |
+| Backend API | http://localhost:8000/api |
 | PostgreSQL | localhost:5432 |
 
 Optionally load sample data once:
@@ -52,10 +52,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env      # optional: set DATABASE_URL for PostgreSQL
 python seed.py            # optional: load sample traces
-python run.py             # http://localhost:5001
+python run.py             # http://localhost:8000
 ```
 
-> The backend listens on **port 5001** by default (macOS reserves 5000 for
+> The backend listens on **port 8000** by default (macOS reserves 5000 for
 > AirPlay). Override with the `PORT` environment variable. Without
 > `DATABASE_URL`, a local SQLite file is used.
 
@@ -64,7 +64,7 @@ python run.py             # http://localhost:5001
 ```bash
 cd frontend
 npm install
-npm run dev               # http://localhost:5173 (proxies /api to :5001)
+npm run dev               # http://localhost:5173 (proxies /api to :8000)
 ```
 
 ## Option C — install the SDK
@@ -105,7 +105,7 @@ The server reads configuration from environment variables (or `backend/.env`):
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `DATABASE_URL` | *(SQLite file)* | PostgreSQL connection string. |
-| `PORT` | `5001` | Backend port. |
+| `PORT` | `8000` | Backend port. |
 | `SECRET_KEY` | `dev-secret-key` | Flask secret. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Allowed dashboard origins. |
 | `STREAM_HEARTBEAT_INTERVAL` | `15` | SSE/WebSocket heartbeat seconds. |

@@ -12,7 +12,7 @@ Example
 
     agentscope.configure(
         service_name="my-rag-app",
-        endpoint="http://localhost:5001",   # AgentScope server
+        endpoint="http://localhost:8000",   # AgentScope server
         api_key="sk-...",                    # sent as Authorization: Bearer
         console=True,                         # also pretty-print traces
     )

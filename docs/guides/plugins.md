@@ -100,13 +100,13 @@ At startup (when `PLUGINS_AUTOLOAD=true`) the loader discovers plugins from:
 ## Manage plugins over REST
 
 ```bash
-curl http://localhost:5001/api/plugins                     # list installed plugins
-curl http://localhost:5001/api/plugins/extensions          # list contributed extensions
-curl http://localhost:5001/api/plugins/weather-tools       # one plugin's detail
-curl -X POST http://localhost:5001/api/plugins/weather-tools/enable
-curl -X POST http://localhost:5001/api/plugins/weather-tools/disable
-curl -X POST http://localhost:5001/api/plugins/weather-tools/reload
-curl -X DELETE http://localhost:5001/api/plugins/weather-tools
+curl http://localhost:8000/api/plugins                     # list installed plugins
+curl http://localhost:8000/api/plugins/extensions          # list contributed extensions
+curl http://localhost:8000/api/plugins/weather-tools       # one plugin's detail
+curl -X POST http://localhost:8000/api/plugins/weather-tools/enable
+curl -X POST http://localhost:8000/api/plugins/weather-tools/disable
+curl -X POST http://localhost:8000/api/plugins/weather-tools/reload
+curl -X DELETE http://localhost:8000/api/plugins/weather-tools
 ```
 
 ## From the CLI

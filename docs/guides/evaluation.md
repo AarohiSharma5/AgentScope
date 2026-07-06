@@ -56,7 +56,7 @@ REST evaluations use the built-in rule-based set (an LLM judge needs an
 in-process callable):
 
 ```bash
-curl -X POST http://localhost:5001/api/evaluations \
+curl -X POST http://localhost:8000/api/evaluations \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "reference": "Paris", "cost_budget": 1.0}'
 ```
@@ -90,7 +90,7 @@ print(result.winner, result.summary["best_by"])   # e.g. cheapest / fastest / be
 ```
 
 ```bash
-curl -X POST http://localhost:5001/api/comparisons \
+curl -X POST http://localhost:8000/api/comparisons \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "models": ["gpt-4o", "gpt-4o-mini"], "evaluate": true}'
 ```

@@ -8,18 +8,18 @@ Fixes for common problems. If something isn't here, check the logs
 ### Port 5000 is already in use (macOS)
 
 macOS reserves port 5000 for AirPlay Receiver. AgentScope's backend defaults to
-**5001**. If you changed it, either free the port or set `PORT` to another value.
+**8000**. If you changed it, either free the port or set `PORT` to another value.
 
 ### `docker compose up` fails to start the backend
 
 - The backend waits for the database's healthcheck. Give it a few seconds, then
   check `docker compose logs -f db`.
-- Ensure nothing else is bound to `5001`, `8080` or `5432`.
+- Ensure nothing else is bound to `8000`, `8080` or `5432`.
 - Rebuild cleanly: `docker compose down -v && docker compose up -d --build`.
 
 ### The dashboard loads but shows no data / API calls fail
 
-- Confirm the backend is healthy: `curl http://localhost:5001/api/health`.
+- Confirm the backend is healthy: `curl http://localhost:8000/api/health`.
 - Check `CORS_ORIGINS` includes your dashboard origin (e.g. `http://localhost:8080`
   in Docker, `http://localhost:5173` for the Vite dev server).
 - In Docker, the frontend proxies `/api` to the backend via nginx — check
@@ -41,7 +41,7 @@ it yourself.
 
 ### My traces don't appear on the server
 
-- Call `agentscope.configure(endpoint="http://localhost:5001")` **before** the
+- Call `agentscope.configure(endpoint="http://localhost:8000")` **before** the
   traced code runs; without an endpoint, traces stay in memory only.
 - Check reachability from where your app runs (containers can't reach
   `localhost` of the host — use the service name or host IP).
@@ -73,7 +73,7 @@ Ensure the SDK is installed and its scripts directory is on your `PATH`, or run
 ### CLI can't reach the server
 
 Run `agentscope doctor` to diagnose connectivity. Set the endpoint with
-`agentscope config set endpoint http://localhost:5001` or pass `--endpoint`.
+`agentscope config set endpoint http://localhost:8000` or pass `--endpoint`.
 
 ### No color in the output
 

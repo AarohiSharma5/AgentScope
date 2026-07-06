@@ -24,7 +24,7 @@ import agentscope
 
 agentscope.configure(
     service_name="my-rag-app",
-    endpoint="http://localhost:5001",  # enables HTTP export to the server
+    endpoint="http://localhost:8000",  # enables HTTP export to the server
     api_key="sk-...",                   # sent as Authorization: Bearer
     console=True,                        # also pretty-print each finished trace
 )

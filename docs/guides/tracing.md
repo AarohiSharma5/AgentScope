@@ -31,7 +31,7 @@ There are two ways to produce traces:
 import agentscope
 from agentscope import trace
 
-agentscope.configure(service_name="my-app", endpoint="http://localhost:5001")
+agentscope.configure(service_name="my-app", endpoint="http://localhost:8000")
 
 # Decorator: every call becomes a traced span.
 @trace("generate", kind="llm", model="gpt-4o")
@@ -130,8 +130,8 @@ WebSockets, powering the **Live** dashboard. Subscribe to `trace.*`, `agent.*`,
 `evaluation.finished`:
 
 ```bash
-curl -N http://localhost:5001/api/stream            # SSE stream
-curl http://localhost:5001/api/stream/info          # connection info
+curl -N http://localhost:8000/api/stream            # SSE stream
+curl http://localhost:8000/api/stream/info          # connection info
 ```
 
 See the [REST API](../reference/rest-api.md#streaming-v06) for stream details.

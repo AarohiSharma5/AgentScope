@@ -36,7 +36,7 @@ WebSocket connections. A typical command:
 
 ```bash
 gunicorn --worker-class gthread --workers 2 --threads 8 \
-         --timeout 120 --bind 0.0.0.0:5001 "app:create_app()"
+         --timeout 120 --bind 0.0.0.0:8000 "app:create_app()"
 ```
 
 Scale by adding workers/replicas behind a load balancer. Because the streaming
@@ -50,7 +50,7 @@ sticky sessions for SSE, or a shared broker if you need cross-worker fan-out.
 | -------- | ------- | ------- |
 | `DATABASE_URL` | *(SQLite)* | PostgreSQL connection string. |
 | `SECRET_KEY` | `dev-secret-key` | **Set a strong value.** |
-| `PORT` | `5001` | Backend port. |
+| `PORT` | `8000` | Backend port. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins. |
 | `STREAM_HEARTBEAT_INTERVAL` | `15` | SSE/WebSocket heartbeat seconds. |
 | `PLUGINS_AUTOLOAD` | `true` | Discover/enable plugins at startup. |
