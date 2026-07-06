@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request
 from ..errors import error_response
 from ..models.agent_trace import AgentStatus
 from ..serializers.agent import serialize_run_detail, serialize_run_summary
-from ..services import trace_service
+from ..services import ingest_service, trace_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 agent_traces_bp = Blueprint("agent_traces", __name__)
@@ -26,6 +26,19 @@ _ALLOWED_STATUS = {
     AgentStatus.SUCCESS,
     AgentStatus.FAILED,
 }
+
+
+@agent_traces_bp.post("/agent-runs")
+def create_agent_run():
+    """Ingest a full agent run (steps, tool calls, memory, retrievals).
+
+    Accepts an optional ``request_id`` to link to an existing request trace; when
+    omitted, a minimal parent trace is created from the top-level fields. Returns
+    the created run with its steps, sub-records and timeline (same shape as GET).
+    """
+    data = request.get_json(silent=True) or {}
+    run = ingest_service.ingest_agent_run(data)
+    return jsonify(serialize_run_detail(run)), 201
 
 
 @agent_traces_bp.get("/agent-runs")

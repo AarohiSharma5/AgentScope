@@ -43,19 +43,65 @@ curl -X POST http://localhost:8000/api/traces \
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
+| POST | `/api/agent-runs` | Ingest a full agent run (steps, tools, memory, retrievals). |
 | GET | `/api/agent-runs` | List runs (pagination, search, sort, filter). |
 | GET | `/api/agent-runs/:id` | Run detail: steps, tools, memory, timeline. |
 | GET | `/api/requests/:id/agent-runs` | All runs for a request. |
 | GET | `/api/dashboard/agent-metrics` | Aggregate agent-execution metrics. |
 
+Use `POST /api/agent-runs` to populate the **Agent Runs** view from an external
+app (e.g. a chatbot). Pass `request_id` to attach the run to an existing trace,
+or omit it to have a parent request trace created from the top-level fields
+(`model_name`, `user_prompt`, `final_response`, token counts, ...). Nested
+`retrievals` on a step also populate the RAG Observatory. Returns the created run
+(same shape as `GET /api/agent-runs/:id`).
+
+**Ingest example**
+
+```bash
+curl -X POST http://localhost:8000/api/agent-runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_name": "Chatbot", "agent_type": "chatbot",
+    "model_name": "gpt-4o", "user_prompt": "refund policy?",
+    "final_response": "Refunds within 30 days.", "status": "success", "latency_ms": 900,
+    "steps": [
+      {"step_type": "retrieval", "name": "Retriever", "input": "refund policy",
+       "retrievals": [{"query": "refund policy", "retrieval_time_ms": 22,
+         "documents": [{"document_name": "Refund policy", "source": "kb",
+                        "score": 0.95, "snippet": "Refunds within 30 days...", "selected": true}]}]},
+      {"step_type": "llm", "name": "LLM Generation", "output": "Refunds within 30 days.",
+       "token_usage": {"input": 120, "output": 18, "total": 138}, "cost": 0,
+       "tool_calls": [{"tool_name": "search_kb", "arguments": {"q": "refund"}, "result": {"hits": 1}}]}
+    ]
+  }'
+```
+
 ## RAG Observatory (v0.3)
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
+| POST | `/api/retrievals` | Ingest a single retrieval (documents + embedding). |
 | GET | `/api/retrievals` | List retrievals (pagination, search, sort, filter). |
 | GET | `/api/retrievals/:id` | Retrieval detail: embedding, docs, scores, prompt, timeline. |
 | GET | `/api/prompts/:id` | Reconstructed prompt (all sections + final). |
 | GET | `/api/dashboard/rag-metrics` | Aggregate RAG metrics. |
+
+`POST /api/retrievals` is a convenience for logging a standalone retrieval so it
+appears in the **RAG Observatory** (it is wrapped in a thin run + step, since
+retrievals hang off agent steps). Accepts the same optional `request_id` /
+parent-trace fields as `POST /api/agent-runs`.
+
+**Ingest example**
+
+```bash
+curl -X POST http://localhost:8000/api/retrievals \
+  -H "Content-Type: application/json" \
+  -d '{"query": "password reset", "retrieval_time_ms": 18,
+       "documents": [{"document_name": "Reset guide", "source": "kb",
+                      "score": 0.9, "chunk_text": "Go to settings...", "selected": true}],
+       "embedding": {"model": "text-embedding-3-small", "dimension": 1536}}'
+```
 
 ## Multi-agent workflows (v0.4)
 

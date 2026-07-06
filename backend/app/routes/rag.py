@@ -18,10 +18,24 @@ from ..serializers.rag import (
     serialize_retrieval_detail,
     serialize_retrieval_summary,
 )
-from ..services import trace_service
+from ..services import ingest_service, trace_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 rag_bp = Blueprint("rag", __name__)
+
+
+@rag_bp.post("/retrievals")
+def create_retrieval():
+    """Ingest a single retrieval so it appears in the RAG Observatory.
+
+    Accepts an optional ``request_id`` to link to an existing request trace; when
+    omitted, a minimal parent trace is created. The retrieval is wrapped in a thin
+    run+step (the RAG Observatory lists retrievals that hang off agent steps).
+    Returns the created retrieval with documents, embedding and timeline.
+    """
+    data = request.get_json(silent=True) or {}
+    retrieval = ingest_service.ingest_retrieval(data)
+    return jsonify(serialize_retrieval_detail(retrieval)), 201
 
 
 @rag_bp.get("/retrievals")
