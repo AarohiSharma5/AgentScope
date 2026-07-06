@@ -84,7 +84,7 @@ flowchart LR
         UI["Dashboards: Requests · Agent Runs · RAG<br/>Workflows · Conversations · Replays<br/>Evaluations · Comparisons · Diffs · Analytics"]
     end
 
-    subgraph BE["Backend — Flask + gunicorn :5001"]
+    subgraph BE["Backend — Flask + gunicorn :8000"]
         API["REST API<br/>routes"]
         SVC["Service layer<br/>trace · workflow · message · replay<br/>evaluation · comparison · prompt · diff"]
     end
@@ -160,7 +160,7 @@ docker compose up -d --build
 ```
 
 - Frontend: **http://localhost:8080**
-- Backend API: **http://localhost:5001/api**
+- Backend API: **http://localhost:8000/api**
 - PostgreSQL: **localhost:5432**
 
 Load sample data (optional, one time):
@@ -188,10 +188,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env            # set DATABASE_URL (Postgres). Without it, SQLite is used.
 python seed.py                  # optional: load 25 sample traces
-python run.py                   # http://localhost:5001
+python run.py                   # http://localhost:8000
 ```
 
-> The backend listens on **port 5001** by default (macOS uses port 5000 for AirPlay Receiver). Override with the `PORT` env var.
+> The backend listens on **port 8000** by default (macOS uses port 5000 for AirPlay Receiver). Override with the `PORT` env var.
 >
 > The app defaults to a local SQLite file when `DATABASE_URL` is unset, so you can try it with zero setup. For production, point `DATABASE_URL` at PostgreSQL.
 
@@ -200,7 +200,7 @@ python run.py                   # http://localhost:5001
 ```bash
 cd frontend
 npm install
-npm run dev                     # http://localhost:5173 (proxies /api to :5001)
+npm run dev                     # http://localhost:5173 (proxies /api to :8000)
 ```
 
 ## API
@@ -283,7 +283,7 @@ with TraceRecorder("gpt-4o", user_prompt=prompt, system_prompt=system) as trace:
 Or POST directly:
 
 ```bash
-curl -X POST http://localhost:5001/api/traces \
+curl -X POST http://localhost:8000/api/traces \
   -H "Content-Type: application/json" \
   -d '{"model_name":"gpt-4o","user_prompt":"Hi","input_tokens":10,"output_tokens":20,"final_response":"Hello!","latency_ms":420}'
 ```
@@ -385,7 +385,7 @@ replayed as-is; cost is re-estimated for the new model). Pass `live=True` with
 fresh logic. Over REST:
 
 ```bash
-curl -X POST http://localhost:5001/api/replays \
+curl -X POST http://localhost:8000/api/replays \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "model": "gpt-4o-mini", "temperature": 0.2}'
 ```
@@ -431,7 +431,7 @@ callable (returning a float or `{"score", "notes"}`), so there is no hard
 dependency on any provider. Over REST (built-in rule-based set):
 
 ```bash
-curl -X POST http://localhost:5001/api/evaluations \
+curl -X POST http://localhost:8000/api/evaluations \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "reference": "Paris", "cost_budget": 1.0}'
 ```
@@ -457,7 +457,7 @@ print(result.winner, result.summary["best_by"])   # e.g. cheapest / fastest / be
 ```
 
 ```bash
-curl -X POST http://localhost:5001/api/comparisons \
+curl -X POST http://localhost:8000/api/comparisons \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "models": ["gpt-4o", "gpt-4o-mini"], "evaluate": true}'
 ```
@@ -471,8 +471,8 @@ retriever counts and latency / cost / token totals — with a per-node output
 diff. Both power the side-by-side **Diffs** dashboard.
 
 ```bash
-curl "http://localhost:5001/api/prompt-diff?a=12&b=8"    # word-level prompt diff
-curl "http://localhost:5001/api/trace-diff?a=1&b=2"      # full trace diff
+curl "http://localhost:8000/api/prompt-diff?a=12&b=8"    # word-level prompt diff
+curl "http://localhost:8000/api/trace-diff?a=1&b=2"      # full trace diff
 ```
 
 ## Roadmap

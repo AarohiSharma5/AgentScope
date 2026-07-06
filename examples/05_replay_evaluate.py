@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:5001").rstrip("/")
+BASE = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:8000").rstrip("/")
 
 
 def post(path: str, body: dict) -> dict:

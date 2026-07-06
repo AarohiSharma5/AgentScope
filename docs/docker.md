@@ -8,7 +8,7 @@ with one command via `docker-compose.yml`.
 | Service | Image / build | Host port | Notes |
 | ------- | ------------- | --------- | ----- |
 | `db` | `postgres:16-alpine` | `5432` | Data persisted in the `agentscope_pgdata` volume; has a `pg_isready` healthcheck. |
-| `backend` | `./backend` (gunicorn) | `5001` | Waits for `db` to be healthy; `DATABASE_URL` points at the `db` service. |
+| `backend` | `./backend` (gunicorn) | `8000` | Waits for `db` to be healthy; `DATABASE_URL` points at the `db` service. |
 | `frontend` | `./frontend` (nginx) | `8080` → `80` | Serves the SPA and proxies `/api` to the backend. |
 
 ## Bring it up
@@ -20,7 +20,7 @@ docker compose up -d --build
 | Service | URL |
 | ------- | --- |
 | Frontend | http://localhost:8080 |
-| Backend API | http://localhost:5001/api |
+| Backend API | http://localhost:8000/api |
 | PostgreSQL | localhost:5432 |
 
 Load sample data once (optional):
@@ -55,7 +55,7 @@ an `.env` file, or your shell:
 | `DATABASE_URL` | `postgresql://agentscope:agentscope@db:5432/agentscope` | Backend DB connection. |
 | `CORS_ORIGINS` | `http://localhost:8080` | Allowed dashboard origin. |
 | `SECRET_KEY` | `change-me-in-production` | **Change this in production.** |
-| `PORT` | `5001` | Backend port. |
+| `PORT` | `8000` | Backend port. |
 
 For the full configuration matrix (auth, JWT, rate limiting, streaming, plugins)
 see [Installation](installation.md#configuration-overview) and

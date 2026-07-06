@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sdk"))
 import agentscope
 from agentscope import trace
 
-ENDPOINT = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:5001")
+ENDPOINT = os.environ.get("AGENTSCOPE_ENDPOINT", "http://localhost:8000")
 API_KEY = os.environ.get("AGENTSCOPE_API_KEY")  # required only if AUTH_ENABLED
 
 

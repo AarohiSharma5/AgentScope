@@ -10,7 +10,7 @@ Quick start
     from agentscope import trace, Agent, Workflow, Tool
 
     # Optional: point at a running AgentScope server + API key.
-    agentscope.configure(endpoint="http://localhost:5001", api_key="sk-...")
+    agentscope.configure(endpoint="http://localhost:8000", api_key="sk-...")
 
     @trace
     def answer(question: str) -> str:

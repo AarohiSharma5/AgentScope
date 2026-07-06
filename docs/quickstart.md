@@ -7,13 +7,13 @@ server is running (see [Installation](installation.md)).
 
 ```bash
 docker compose up -d --build
-# Dashboard: http://localhost:8080   API: http://localhost:5001/api
+# Dashboard: http://localhost:8080   API: http://localhost:8000/api
 ```
 
 Confirm it is healthy:
 
 ```bash
-curl http://localhost:5001/api/health
+curl http://localhost:8000/api/health
 # {"status": "ok", "service": "agentscope"}
 ```
 
@@ -28,7 +28,7 @@ import agentscope
 from agentscope import trace
 
 # Ship finished traces to the running server.
-agentscope.configure(service_name="quickstart", endpoint="http://localhost:5001")
+agentscope.configure(service_name="quickstart", endpoint="http://localhost:8000")
 
 @trace("generate", kind="llm", model="gpt-4o")
 def generate(prompt: str) -> str:
@@ -46,7 +46,7 @@ table. Full details in [SDK](reference/sdk.md).
 Any language can ingest a trace over HTTP:
 
 ```bash
-curl -X POST http://localhost:5001/api/traces \
+curl -X POST http://localhost:8000/api/traces \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "gpt-4o",
@@ -61,14 +61,14 @@ curl -X POST http://localhost:5001/api/traces \
 ## 3. Query it back
 
 ```bash
-curl http://localhost:5001/api/traces          # recent traces
-curl http://localhost:5001/api/stats           # aggregate dashboard metrics
+curl http://localhost:8000/api/traces          # recent traces
+curl http://localhost:8000/api/stats           # aggregate dashboard metrics
 ```
 
 ## 4. Explore with the CLI
 
 ```bash
-agentscope config set endpoint http://localhost:5001
+agentscope config set endpoint http://localhost:8000
 agentscope status              # live platform metrics
 agentscope trace list --limit 10
 ```

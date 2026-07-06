@@ -13,7 +13,7 @@ list across all versions.
 - List endpoints accept `page`, `limit` (max 100) and, where noted, `sort`,
   `search` and filter parameters.
 
-Base URL in local development: `http://localhost:5001/api`.
+Base URL in local development: `http://localhost:8000/api`.
 
 ## Health
 
@@ -33,7 +33,7 @@ Base URL in local development: `http://localhost:5001/api`.
 **Ingest example**
 
 ```bash
-curl -X POST http://localhost:5001/api/traces \
+curl -X POST http://localhost:8000/api/traces \
   -H "Content-Type: application/json" \
   -d '{"model_name":"gpt-4o","user_prompt":"Hi","input_tokens":10,
        "output_tokens":20,"final_response":"Hello!","latency_ms":420}'
@@ -109,7 +109,7 @@ heartbeat
 **Subscribe**
 
 ```bash
-curl -N http://localhost:5001/api/stream
+curl -N http://localhost:8000/api/stream
 ```
 
 ## Plugins (v0.6)
@@ -178,7 +178,7 @@ the [Deployment](../deployment.md#authentication--multi-tenancy) guide.
 **Register example**
 
 ```bash
-curl -X POST http://localhost:5001/api/auth/register \
+curl -X POST http://localhost:8000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@acme.test","password":"password123","organization_name":"Acme"}'
 ```

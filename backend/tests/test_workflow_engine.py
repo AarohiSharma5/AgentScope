@@ -194,6 +194,14 @@ def test_parallel_branches_run_concurrently(app_ctx):
         },
     }
 
+    # Warm up first: the very first engine.run pays one-time costs (lazy
+    # imports, thread-pool spin-up, first trace-record writes). Timing that
+    # cold-start run made the parallel case (which happened to run first) look
+    # no faster than the warm serial run and flaked on loaded CI runners. A
+    # throwaway run pays those costs so both measured runs are on equal footing.
+    assert engine.run(parallel_spec, handlers=handlers).ok
+    assert engine.run(serial_spec, handlers=handlers).ok
+
     started = time.perf_counter()
     parallel_result = engine.run(parallel_spec, handlers=handlers)
     parallel_elapsed = time.perf_counter() - started

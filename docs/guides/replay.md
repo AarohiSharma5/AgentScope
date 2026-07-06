@@ -52,7 +52,7 @@ REST replays run in mock mode (live handlers are Python callables, only
 available through the SDK):
 
 ```bash
-curl -X POST http://localhost:5001/api/replays \
+curl -X POST http://localhost:8000/api/replays \
   -H "Content-Type: application/json" \
   -d '{"conversation_run_id": 1, "model": "gpt-4o-mini", "temperature": 0.2}'
 ```
@@ -78,8 +78,8 @@ word by word, or diff two whole conversations on their step/tool/memory/retrieve
 counts and latency/cost/token totals:
 
 ```bash
-curl "http://localhost:5001/api/prompt-diff?a=12&b=8"    # word-level prompt diff
-curl "http://localhost:5001/api/trace-diff?a=1&b=2"      # full trace diff
+curl "http://localhost:8000/api/prompt-diff?a=12&b=8"    # word-level prompt diff
+curl "http://localhost:8000/api/trace-diff?a=1&b=2"      # full trace diff
 ```
 
 Both power the side-by-side **Diffs** dashboard.

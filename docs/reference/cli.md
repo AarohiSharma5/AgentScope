@@ -49,7 +49,7 @@ variables → config file. API keys are masked in output.
 
 ```bash
 agentscope init                              # guided setup
-agentscope config set endpoint http://localhost:5001
+agentscope config set endpoint http://localhost:8000
 agentscope config set api_key as_xxx
 agentscope config list
 agentscope config path

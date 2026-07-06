@@ -25,9 +25,9 @@ services:
       DATABASE_URL: postgresql://agentscope:agentscope@db:5432/agentscope
       CORS_ORIGINS: http://localhost:8080
       SECRET_KEY: change-me-in-production
-      PORT: "5001"
+      PORT: "8000"
     ports:
-      - "5001:5001"
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy

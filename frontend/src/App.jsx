@@ -74,7 +74,9 @@ export default function App() {
             </nav>
           </div>
           <a
-            href="https://github.com"
+            href="https://github.com/AarohiSharma5/AgentScope/tree/main/docs"
+            target="_blank"
+            rel="noopener noreferrer"
             className="text-sm text-gray-400 transition-colors hover:text-gray-200"
           >
             Docs

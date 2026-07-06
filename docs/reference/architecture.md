@@ -22,7 +22,7 @@ flowchart LR
 
     CLI["agentscope CLI"]
 
-    subgraph BE["Backend — Flask + gunicorn :5001"]
+    subgraph BE["Backend — Flask + gunicorn :8000"]
         API["REST API (routes)"]
         SVC["Service layer<br/>trace · workflow · message · replay<br/>evaluation · comparison · prompt · diff · auth · audit"]
         SUB["Subsystems<br/>streaming · plugins · providers · exporting"]
