@@ -31,6 +31,20 @@ logger = logging.getLogger("agentscope")
 # -- Conversation runs ------------------------------------------------------
 
 
+def _current_org_id() -> Optional[int]:
+    """Organization of the writing API-key identity (best-effort, None if absent)."""
+    from ..auth.context import current_organization_id
+
+    return current_organization_id()
+
+
+def _tenant_scope() -> Optional[int]:
+    """Organization id reads should be restricted to, or None for no scoping."""
+    from ..auth.context import tenant_scope
+
+    return tenant_scope()
+
+
 def create_conversation_run(
     request_trace_id: int,
     conversation_name: Optional[str] = None,
@@ -45,6 +59,7 @@ def create_conversation_run(
         status=status,
         started_at=started_at or utcnow(),
         conversation_metadata=ensure_json_object(metadata, "metadata"),
+        organization_id=_current_org_id(),
     )
     db.session.add(conversation)
     db.session.commit()
@@ -332,6 +347,9 @@ def list_conversations(
         selectinload(ConversationRun.nodes),
         selectinload(ConversationRun.messages),
     )
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(ConversationRun.organization_id == org_id)
     if status is not None:
         query = query.filter(ConversationRun.status == status)
     if q:
@@ -351,8 +369,11 @@ def list_conversations(
 
 
 def get_conversation(conversation_id: int) -> Optional[ConversationRun]:
-    """Return a conversation eager-loaded with its agent tree, runs/steps and messages."""
-    return (
+    """Return a conversation eager-loaded with its agent tree, runs/steps and messages.
+
+    Hidden (returns ``None``) when it belongs to a different tenant.
+    """
+    conversation = (
         db.session.query(ConversationRun)
         .options(
             selectinload(ConversationRun.nodes)
@@ -365,6 +386,12 @@ def get_conversation(conversation_id: int) -> Optional[ConversationRun]:
         .filter(ConversationRun.id == conversation_id)
         .one_or_none()
     )
+    if conversation is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and conversation.organization_id != org_id:
+        return None
+    return conversation
 
 
 def get_workflow_metrics() -> dict:

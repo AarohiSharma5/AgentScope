@@ -73,6 +73,15 @@ class ConversationRun(db.Model):
 
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
+    # Tenant ownership (v1.0, phase 1). Nullable + SET NULL, stamped from the
+    # writing API-key identity; mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Trace -> ConversationRuns. Backref added without touching the Trace model.
     request = db.relationship(
         "Trace",

@@ -8,7 +8,7 @@ credentials.
 from dataclasses import dataclass
 from typing import Optional
 
-from flask import current_app, g, request
+from flask import current_app, g, has_request_context, request
 
 from ..extensions import db
 from ..models.auth import ApiKey, User
@@ -59,6 +59,34 @@ def set_identity(identity: Optional[Identity]) -> None:
 
 def current_identity() -> Optional[Identity]:
     return getattr(g, _IDENTITY_ATTR, None)
+
+
+def current_organization_id() -> Optional[int]:
+    """Organization of the current API-key principal, or ``None``.
+
+    Only API keys carry a single organization; JWT users may belong to several,
+    so they are intentionally not tenant-scoped in this phase. Safe to call
+    outside a request (returns ``None``).
+    """
+    if not has_request_context():
+        return None
+    identity = current_identity()
+    if identity is None or identity.auth_type != "api_key":
+        return None
+    return identity.organization_id
+
+
+def tenant_scope() -> Optional[int]:
+    """Organization id that reads should be restricted to, or ``None``.
+
+    Scoping applies only when auth is enforced (``AUTH_ENABLED``) *and* the
+    caller authenticated with an org-bound API key. Otherwise (auth off, or a
+    JWT/dashboard user) data is unscoped, preserving backward-compatible
+    single-tenant behavior.
+    """
+    if not has_request_context() or not current_app.config.get("AUTH_ENABLED"):
+        return None
+    return current_organization_id()
 
 
 def resolve_identity() -> Optional[Identity]:

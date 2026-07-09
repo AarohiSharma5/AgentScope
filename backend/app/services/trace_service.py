@@ -59,6 +59,20 @@ def estimate_cost(model_name: str, input_tokens: int, output_tokens: int) -> Opt
     )
 
 
+def _current_org_id() -> Optional[int]:
+    """Organization of the writing API-key identity (best-effort, None if absent)."""
+    from ..auth.context import current_organization_id
+
+    return current_organization_id()
+
+
+def _tenant_scope() -> Optional[int]:
+    """Organization id reads should be restricted to, or None for no scoping."""
+    from ..auth.context import tenant_scope
+
+    return tenant_scope()
+
+
 def create_trace(data: dict) -> Trace:
     """Create and persist a Trace from a payload dict."""
     input_tokens = data.get("input_tokens")
@@ -86,6 +100,7 @@ def create_trace(data: dict) -> Trace:
         final_response=data.get("final_response"),
         status=data.get("status", TraceStatus.SUCCESS),
         error_message=data.get("error_message"),
+        organization_id=data.get("organization_id") or _current_org_id(),
     )
     db.session.add(trace)
     db.session.commit()
@@ -128,37 +143,54 @@ def update_trace(trace_id: int, **fields) -> Optional[Trace]:
 
 
 def list_traces(limit: int = 100, offset: int = 0) -> list[Trace]:
-    """Return traces ordered by most recent first."""
-    return (
-        Trace.query.order_by(Trace.timestamp.desc())
-        .limit(limit)
-        .offset(offset)
-        .all()
-    )
+    """Return traces ordered by most recent first (tenant-scoped when applicable)."""
+    query = Trace.query
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(Trace.organization_id == org_id)
+    return query.order_by(Trace.timestamp.desc()).limit(limit).offset(offset).all()
 
 
 def get_trace(trace_id: int) -> Optional[Trace]:
-    """Return a single trace by id, or None."""
-    return db.session.get(Trace, trace_id)
+    """Return a single trace by id, or None (hidden when it belongs to another tenant)."""
+    trace = db.session.get(Trace, trace_id)
+    if trace is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and trace.organization_id != org_id:
+        return None
+    return trace
+
+
+def get_stats() -> dict:
+    """Compute aggregate dashboard metrics (tenant-scoped when applicable).
+
+    Thin wrapper that resolves the caller's tenant scope, then delegates to the
+    cached, per-organization aggregator so scoped and unscoped results never
+    share a cache entry.
+    """
+    return _stats_for_org(_tenant_scope())
 
 
 @cached()
-def get_stats() -> dict:
-    """Compute aggregate dashboard metrics across all traces.
+def _stats_for_org(organization_id: Optional[int] = None) -> dict:
+    """Compute aggregate dashboard metrics for one organization (or all).
 
     All aggregates are computed in a single round-trip and the result is cached
     for a few seconds (``METRICS_CACHE_TTL``) so a burst of concurrent dashboard
     loads collapses into one query instead of one query per widget per request.
+    The ``organization_id`` argument is part of the cache key.
     """
-    total_requests, avg_latency, avg_tokens, avg_cost, success_count = (
-        db.session.query(
-            func.count(Trace.id),
-            func.avg(Trace.latency_ms),
-            func.avg(Trace.total_tokens),
-            func.avg(Trace.estimated_cost),
-            func.sum(case((Trace.status == TraceStatus.SUCCESS, 1), else_=0)),
-        ).one()
+    query = db.session.query(
+        func.count(Trace.id),
+        func.avg(Trace.latency_ms),
+        func.avg(Trace.total_tokens),
+        func.avg(Trace.estimated_cost),
+        func.sum(case((Trace.status == TraceStatus.SUCCESS, 1), else_=0)),
     )
+    if organization_id is not None:
+        query = query.filter(Trace.organization_id == organization_id)
+    total_requests, avg_latency, avg_tokens, avg_cost, success_count = query.one()
 
     total_requests = total_requests or 0
     if total_requests == 0:

@@ -200,6 +200,14 @@ Authentication endpoints are always available; global enforcement on the data
 routes above is opt-in via `AUTH_ENABLED`. Authenticate with
 `Authorization: Bearer <jwt>` or `X-API-Key: <key>`.
 
+**Tenant isolation (phase 1).** When auth is enabled and a request is made with
+an **org-bound API key**, ingested requests/conversations are stamped with that
+key's organization, and the traces and conversations list/detail endpoints
+return only that organization's data. JWT/dashboard users are not tenant-scoped
+(a user may belong to several organizations). Data written without an org-bound
+key (or with auth disabled) has no organization and is visible to unscoped
+callers, preserving single-tenant behavior.
+
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
 | POST | `/api/auth/register` | Create a user + first organization (admin). |

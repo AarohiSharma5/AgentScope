@@ -51,6 +51,16 @@ class Trace(db.Model):
     status = db.Column(db.String(20), nullable=False, default=TraceStatus.SUCCESS, index=True)
     error_message = db.Column(db.Text, nullable=True)
 
+    # Tenant ownership (v1.0, phase 1). Nullable so single-tenant / auth-off use
+    # is unchanged; stamped from the writing API-key identity when present.
+    # SET NULL keeps observability history if an organization is deleted.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     def to_dict(self) -> dict:
         """Serialize the trace to a JSON-friendly dictionary."""
         return {
@@ -69,6 +79,7 @@ class Trace(db.Model):
             "final_response": self.final_response,
             "status": self.status,
             "error_message": self.error_message,
+            "organization_id": self.organization_id,
         }
 
     def __repr__(self) -> str:
