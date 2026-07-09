@@ -110,7 +110,7 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: backend
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=85
 
       - name: Upload coverage report
         if: always()
@@ -128,6 +128,61 @@ jobs:
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ------------------------------------------------- backend tests (PostgreSQL)
+  backend-tests-postgres:
+    name: Backend tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agentscope
+          POSTGRES_PASSWORD: agentscope
+          POSTGRES_DB: agentscope_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PG_DSN: postgresql://agentscope:agentscope@localhost:5432/agentscope_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      # Gating: the schema migrations must apply cleanly on real PostgreSQL and
+      # leave no drift versus the models.
+      - name: Verify migrations apply on PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ env.PG_DSN }}
+          USE_MIGRATIONS: "true"
+        run: |
+          alembic upgrade head
+          alembic check
+
+      # Advisory: exercise the full suite against PostgreSQL to surface
+      # dialect/cascade/pooling differences. Not yet gating while any
+      # SQLite-only assumptions are ironed out.
+      - name: Run test suite against PostgreSQL (advisory)
+        continue-on-error: true
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: ${{ env.PG_DSN }}
+        run: pytest -q
 
   # ----------------------------------------------------------------- sdk tests
   sdk-tests:
@@ -156,7 +211,7 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: sdk
-        run: pytest --cov=agentscope --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=agentscope --cov-report=xml --cov-report=term-missing --cov-fail-under=70
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
@@ -232,7 +287,7 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [lint, security, backend-tests, sdk-tests, frontend, docker]
+    needs: [lint, security, backend-tests, backend-tests-postgres, sdk-tests, frontend, docker]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs passed
@@ -240,12 +295,14 @@ jobs:
           echo "lint=${{ needs.lint.result }}"
           echo "security=${{ needs.security.result }}"
           echo "backend-tests=${{ needs.backend-tests.result }}"
+          echo "backend-tests-postgres=${{ needs.backend-tests-postgres.result }}"
           echo "sdk-tests=${{ needs.sdk-tests.result }}"
           echo "frontend=${{ needs.frontend.result }}"
           echo "docker=${{ needs.docker.result }}"
           test "${{ needs.lint.result }}" = "success" &&
           test "${{ needs.security.result }}" = "success" &&
           test "${{ needs.backend-tests.result }}" = "success" &&
+          test "${{ needs.backend-tests-postgres.result }}" = "success" &&
           test "${{ needs.sdk-tests.result }}" = "success" &&
           test "${{ needs.frontend.result }}" = "success" &&
           test "${{ needs.docker.result }}" = "success"
