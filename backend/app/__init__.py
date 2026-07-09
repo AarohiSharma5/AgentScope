@@ -181,8 +181,12 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         return jsonify({"status": "ok", "service": "agentscope"})
 
     _enable_sqlite_foreign_keys(app)
-    with app.app_context():
-        db.create_all()
+    # When migrations own the schema (USE_MIGRATIONS=true), the app must not
+    # silently create tables — schema changes go through ``alembic upgrade head``
+    # so production databases evolve safely instead of drifting.
+    if not app.config.get("USE_MIGRATIONS"):
+        with app.app_context():
+            db.create_all()
 
     from .jobs import job_manager
     job_manager.init_app(app)

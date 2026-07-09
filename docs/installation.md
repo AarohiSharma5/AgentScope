@@ -105,6 +105,7 @@ The server reads configuration from environment variables (or `backend/.env`):
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `DATABASE_URL` | *(SQLite file)* | PostgreSQL connection string. |
+| `USE_MIGRATIONS` | `false` | Manage schema via Alembic (`alembic upgrade head`) instead of auto-create. |
 | `PORT` | `8000` | Backend port. |
 | `SECRET_KEY` | `dev-secret-key` | Flask secret. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Allowed dashboard origins. |

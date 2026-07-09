@@ -28,6 +28,12 @@ class Config:
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # When true, the schema is owned by Alembic migrations: the app will NOT
+    # auto-create tables at boot, and you must run ``alembic upgrade head`` to
+    # provision/evolve the database. Default false preserves the zero-config
+    # ``create_all()`` behavior for SQLite/dev and existing deployments.
+    USE_MIGRATIONS = os.getenv("USE_MIGRATIONS", "false").lower() == "true"
+
     # -- Connection pooling & query performance -----------------------------
     # A healthy connection pool is essential under concurrent load. These are
     # only meaningful for a real server backend (PostgreSQL); SQLite uses its

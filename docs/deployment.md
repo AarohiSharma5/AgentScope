@@ -25,8 +25,32 @@ PostgreSQL. Terminate TLS at a reverse proxy or the nginx layer.
   (`postgresql://user:pass@host:5432/dbname`). The `postgres://` scheme is
   auto-normalized to `postgresql://`.
 - SQLite is fine for local/dev but not for concurrent production load.
-- Tables are created automatically on startup (`db.create_all()`); back up the
-  database volume/instance regularly.
+- Back up the database volume/instance regularly.
+
+### Schema migrations (Alembic)
+
+By default the app auto-creates any missing tables at startup
+(`db.create_all()`), which is convenient for local/SQLite use but **cannot
+evolve an existing schema** (added/renamed/removed columns are ignored). For
+production, let **Alembic** own the schema instead:
+
+```bash
+cd backend
+export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+export USE_MIGRATIONS=true          # stop the app from auto-creating tables
+alembic upgrade head                # create/upgrade the schema
+```
+
+- Set `USE_MIGRATIONS=true` in production so schema changes only happen through
+  reviewed migrations (run `alembic upgrade head` as a release/deploy step).
+- **Adopting migrations on an existing `create_all` database:** the schema
+  already matches the initial migration, so just record it without re-running
+  DDL — `alembic stamp head` — then use `alembic upgrade head` for future
+  changes.
+- **Authoring a change:** edit the models, then
+  `alembic revision --autogenerate -m "describe change"`, review the generated
+  file, and commit it. Migrations use batch mode so they apply on both SQLite
+  and PostgreSQL.
 
 ## Backend server
 
@@ -49,6 +73,7 @@ sticky sessions for SSE, or a shared broker if you need cross-worker fan-out.
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `DATABASE_URL` | *(SQLite)* | PostgreSQL connection string. |
+| `USE_MIGRATIONS` | `false` | When `true`, skip `create_all()`; manage schema via `alembic upgrade head`. |
 | `SECRET_KEY` | `dev-secret-key` | **Set a strong value.** |
 | `PORT` | `8000` | Backend port. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins. |
@@ -101,11 +126,13 @@ See the [REST API auth section](reference/rest-api.md#authentication--tenancy-v1
 - [ ] `AUTH_ENABLED=true` and TLS in front of the app.
 - [ ] Restrict `CORS_ORIGINS` to your real dashboard origin(s).
 - [ ] Managed PostgreSQL with backups; wipe defaults (`change-me-in-production`).
+- [ ] `USE_MIGRATIONS=true` and `alembic upgrade head` run as a deploy step.
 - [ ] Rate limiting enabled; consider a shared store for multi-worker limits.
 - [ ] Review enabled plugins and provider credentials.
 
 ## Upgrades
 
 Releases are additive and backward compatible across `v0.1 → v1.0`. Pull the new
-images/code and restart; existing data and APIs continue to work. See
-[CHANGELOG.md](../CHANGELOG.md).
+images/code and restart; existing data and APIs continue to work. When running
+with `USE_MIGRATIONS=true`, run `alembic upgrade head` after pulling so any new
+schema is applied. See [CHANGELOG.md](../CHANGELOG.md).
