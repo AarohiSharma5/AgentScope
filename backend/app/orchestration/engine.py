@@ -454,16 +454,24 @@ class WorkflowEngine:
         def work():
             if handler is None:
                 return None
-            if node_timeout:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(handler, ctx)
-                    try:
-                        return future.result(timeout=node_timeout / 1000)
-                    except FuturesTimeout as exc:
-                        raise NodeTimeout(
-                            f"node timed out after {node_timeout}ms"
-                        ) from exc
-            return handler(ctx)
+            if not node_timeout:
+                return handler(ctx)
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(handler, ctx)
+            try:
+                return future.result(timeout=node_timeout / 1000)
+            except FuturesTimeout as exc:
+                future.cancel()
+                raise NodeTimeout(f"node timed out after {node_timeout}ms") from exc
+            finally:
+                # Do not block the workflow waiting for a runaway handler. A
+                # running Python thread can't be force-killed, so we stop
+                # waiting (wait=False) and let it finish in the background;
+                # cancel_futures drops any work that never started. Previously
+                # the `with` block's implicit shutdown(wait=True) meant a
+                # timed-out node still blocked until the handler returned,
+                # defeating the timeout.
+                executor.shutdown(wait=False, cancel_futures=True)
 
         return work
 
