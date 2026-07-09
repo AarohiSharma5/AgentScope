@@ -168,7 +168,14 @@ class EvaluationEngine:
 
         def task() -> EvaluationResult:
             with app.app_context():
-                return self.evaluate(*args, **kwargs)
+                try:
+                    return self.evaluate(*args, **kwargs)
+                finally:
+                    # Pooled worker threads are reused; drop the thread-local
+                    # session so connections/state never bleed across evals.
+                    from ..extensions import db
+
+                    db.session.remove()
 
         return self._get_executor().submit(task)
 

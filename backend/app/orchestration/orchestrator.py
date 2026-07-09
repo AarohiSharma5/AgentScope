@@ -26,7 +26,10 @@ from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from typing import Any, Iterable, Optional, Union
 
+from flask import current_app, has_app_context
+
 from ..models.agent_trace import AgentStatus
+from ..models.trace import TraceStatus
 from ..services import trace_service, workflow_service
 from ..utils.trace_recorder import TraceRecorder
 from .agent import Agent
@@ -170,11 +173,21 @@ class AgentOrchestrator:
         for agent, _ in normalized:
             agent._begin(parallel_group=group)
 
-        # 2. Run the user work concurrently (no DB access inside threads).
+        # 2. Run the user work concurrently. Worker threads do not share the
+        #    request's Flask application context, so we re-enter it inside each
+        #    thread; handlers that legitimately touch ``current_app`` or the ORM
+        #    then behave the same as on the sequential path.
+        app = current_app._get_current_object() if has_app_context() else None
+
+        def _invoke(pair):
+            agent, work = pair
+            if app is None:
+                return agent._run_timed(work)
+            with app.app_context():
+                return agent._run_timed(work)
+
         with ThreadPoolExecutor(max_workers=len(normalized)) as executor:
-            outcomes = list(
-                executor.map(lambda pair: pair[0]._run_timed(pair[1]), normalized)
-            )
+            outcomes = list(executor.map(_invoke, normalized))
 
         # 3. Finish every run (sequential DB writes) with its measured latency.
         results: dict[str, Any] = {}
@@ -208,11 +221,16 @@ class AgentOrchestrator:
         workflow_service.finish_conversation_run(
             self.conversation, status=status, latency_ms=latency_ms, metadata=metadata
         )
-        # Keep the parent request trace's terminal status in sync.
-        trace_service.update_trace(
-            self.request_trace_id,
-            status="success" if status == AgentStatus.SUCCESS else "failed",
-        )
+        # Keep the parent request trace's terminal status in sync, preserving
+        # the cancelled/timeout distinction instead of collapsing everything
+        # non-success into "failed".
+        if status == AgentStatus.SUCCESS:
+            trace_status = TraceStatus.SUCCESS
+        elif status in (AgentStatus.CANCELLED, AgentStatus.TIMEOUT):
+            trace_status = status
+        else:
+            trace_status = TraceStatus.FAILED
+        trace_service.update_trace(self.request_trace_id, status=trace_status)
         self._finished = True
         return self.conversation
 

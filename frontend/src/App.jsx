@@ -18,6 +18,25 @@ import Comparisons from "./pages/Comparisons.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Diffs from "./pages/Diffs.jsx";
 import Live from "./pages/Live.jsx";
+import EmptyState from "./components/ui/EmptyState.jsx";
+
+function NotFound() {
+  return (
+    <EmptyState
+      icon="?"
+      title="Page not found"
+      message="The page you’re looking for doesn’t exist."
+      action={
+        <Link
+          to="/"
+          className="rounded-lg border border-ink-500 bg-ink-700 px-4 py-2 text-sm text-gray-200 transition-colors hover:bg-ink-600"
+        >
+          Back to dashboard
+        </Link>
+      }
+    />
+  );
+}
 
 function NavItem({ to, label, end }) {
   return (
@@ -105,6 +124,7 @@ export default function App() {
           <Route path="/diffs" element={<Diffs />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/live" element={<Live />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
     </div>

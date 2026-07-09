@@ -18,11 +18,24 @@ def create_trace():
     return jsonify(trace.to_dict()), 201
 
 
+#: Upper bound on the number of traces a single list request may return, so a
+#: client cannot ask for an unbounded slice and exhaust server memory.
+MAX_TRACES_LIMIT = 500
+
+
 @traces_bp.get("/traces")
 def list_traces():
-    """List traces (most recent first) with simple pagination."""
-    limit = request.args.get("limit", default=100, type=int)
-    offset = request.args.get("offset", default=0, type=int)
+    """List traces (most recent first) with simple, bounded pagination."""
+    try:
+        limit = int(request.args.get("limit", 100))
+        offset = int(request.args.get("offset", 0))
+    except (TypeError, ValueError):
+        return error_response("limit and offset must be integers", 400)
+    if not (1 <= limit <= MAX_TRACES_LIMIT):
+        return error_response(f"limit must be between 1 and {MAX_TRACES_LIMIT}", 400)
+    if offset < 0:
+        return error_response("offset must be >= 0", 400)
+
     traces = trace_service.list_traces(limit=limit, offset=offset)
     return jsonify([t.to_dict() for t in traces])
 

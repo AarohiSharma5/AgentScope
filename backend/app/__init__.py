@@ -3,7 +3,7 @@ import logging
 import sqlite3
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from sqlalchemy import event
 
@@ -42,6 +42,65 @@ def _enable_sqlite_foreign_keys(app: Flask) -> None:
                 cursor.close()
 
 
+# Secret values that ship as documentation placeholders. Booting with auth on
+# while still using any of these means JWTs are trivially forgeable.
+_DEFAULT_SECRETS = frozenset({None, "", "dev-secret-key", "change-me-in-production"})
+
+# Paths reachable without credentials even when AUTH_ENABLED is on: the health
+# probe and the endpoints used to *obtain* credentials in the first place.
+_AUTH_EXEMPT_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/refresh",
+    }
+)
+
+
+def _verify_production_secrets(app: Flask) -> None:
+    """Fail fast if auth is enabled while default/placeholder secrets are in use."""
+    if not app.config.get("AUTH_ENABLED"):
+        return
+    weak = [
+        name
+        for name in ("SECRET_KEY", "JWT_SECRET")
+        if app.config.get(name) in _DEFAULT_SECRETS
+    ]
+    if weak:
+        raise RuntimeError(
+            "AUTH_ENABLED=true requires strong, non-default secrets; set a random "
+            f"value for: {', '.join(weak)}."
+        )
+
+
+def _register_auth_enforcement(app: Flask) -> None:
+    """Require a valid principal on data routes when ``AUTH_ENABLED`` is set.
+
+    Off by default so existing deployments stay backward compatible. When on,
+    every ``/api`` route needs a valid JWT or API key except the health probe
+    and the credential-issuing auth endpoints. Per-route decorators still own
+    authorization (roles / org isolation); this hook only enforces that a
+    request is *authenticated at all*, which is what ``AUTH_ENABLED`` promises.
+    """
+    from .auth import AuthError, resolve_identity, set_identity
+
+    @app.before_request
+    def _enforce_auth():  # pragma: no cover - exercised via app config in tests
+        if not app.config.get("AUTH_ENABLED"):
+            return None
+        if request.method == "OPTIONS":
+            return None  # let CORS preflight through
+        path = request.path
+        if not path.startswith("/api/") or path in _AUTH_EXEMPT_PATHS:
+            return None
+        identity = resolve_identity()  # raises AuthError on invalid credentials
+        if identity is None:
+            raise AuthError()
+        set_identity(identity)
+        return None
+
+
 def _register_websocket(app: Flask) -> None:
     """Register the v0.6 WebSocket endpoint (flask-sock), if available.
 
@@ -66,6 +125,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
 
     app = Flask(__name__)
     app.config.from_object(config_class)
+    _verify_production_secrets(app)
 
     db.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
@@ -112,6 +172,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(jobs_bp, url_prefix="/api")
     _register_websocket(app)
     register_request_logging(app)
+    _register_auth_enforcement(app)
     register_error_handlers(app)
     register_auth_error_handlers(app)
 
