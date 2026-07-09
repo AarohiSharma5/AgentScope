@@ -75,6 +75,7 @@ export default function AgentRuns() {
             Sort
           </label>
           <select
+            aria-label="Sort agent runs"
             value={sort}
             onChange={(e) => {
               setPage(1);

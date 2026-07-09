@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { fmtTime } from "../../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../../lib/rowInteraction.js";
 
 const HEADERS = ["Workflow", "Name", "Version", "Executions", "Updated"];
 
@@ -22,8 +23,11 @@ export default function WorkflowsTable({ workflows }) {
           {workflows.map((w) => (
             <tr
               key={w.id}
-              onClick={() => navigate(`/workflows/${w.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
+              {...interactiveRowProps(
+                () => navigate(`/workflows/${w.id}`),
+                `Open workflow ${w.id} (${w.workflow_name || "unnamed"})`,
+              )}
+              className={INTERACTIVE_ROW_CLASS}
             >
               <td className="px-4 py-3 font-mono text-gray-400">#{w.id}</td>
               <td className="px-4 py-3 font-medium text-gray-200">

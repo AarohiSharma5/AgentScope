@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "../StatusBadge.jsx";
 import { fmtScore, fmtTime } from "../../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../../lib/rowInteraction.js";
 
 const HEADERS = ["Evaluation", "Type", "Score", "Status", "Metrics", "Conversation", "Created"];
 
@@ -31,8 +32,11 @@ export default function EvaluationsTable({ evaluations }) {
           {evaluations.map((e) => (
             <tr
               key={e.id}
-              onClick={() => navigate(`/evaluations/${e.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
+              {...interactiveRowProps(
+                () => navigate(`/evaluations/${e.id}`),
+                `Open evaluation ${e.id}`,
+              )}
+              className={INTERACTIVE_ROW_CLASS}
             >
               <td className="px-4 py-3 font-mono text-gray-400">#{e.id}</td>
               <td className="px-4 py-3 text-gray-300">

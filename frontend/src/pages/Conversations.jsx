@@ -73,6 +73,7 @@ export default function Conversations() {
         />
         <div className="flex items-center gap-2">
           <select
+            aria-label="Filter conversations by status"
             value={status}
             onChange={(e) => {
               setPage(1);
@@ -87,6 +88,7 @@ export default function Conversations() {
             ))}
           </select>
           <select
+            aria-label="Sort conversations"
             value={sort}
             onChange={(e) => {
               setPage(1);

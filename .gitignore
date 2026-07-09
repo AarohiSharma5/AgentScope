@@ -6,6 +6,12 @@ venv/
 *.db
 .env
 
+# Test coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
 # Node
 node_modules/
 dist/

@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "../StatusBadge.jsx";
 import { fmtLatency, fmtScore } from "../../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../../lib/rowInteraction.js";
 
 const HEADERS = [
   "Retrieval",
@@ -40,8 +41,11 @@ export default function RetrievalsTable({ retrievals }) {
           {retrievals.map((r) => (
             <tr
               key={r.id}
-              onClick={() => navigate(`/retrievals/${r.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
+              {...interactiveRowProps(
+                () => navigate(`/retrievals/${r.id}`),
+                `Open retrieval ${r.id}`,
+              )}
+              className={INTERACTIVE_ROW_CLASS}
             >
               <td className="px-4 py-3 font-mono text-gray-400">#{r.id}</td>
               <td className="max-w-[220px] truncate px-4 py-3 text-gray-200" title={r.query}>

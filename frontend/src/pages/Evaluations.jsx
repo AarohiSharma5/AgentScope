@@ -92,6 +92,7 @@ export default function Evaluations() {
         <div className="flex items-center gap-2">
           <label className="text-xs uppercase tracking-wider text-gray-500">Sort</label>
           <select
+            aria-label="Sort evaluations"
             value={sort}
             onChange={(e) => {
               setPage(1);

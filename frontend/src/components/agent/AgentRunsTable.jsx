@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import StatusBadge from "../StatusBadge.jsx";
 import { fmtDuration, fmtLatency, fmtTime } from "../../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../../lib/rowInteraction.js";
 
 const HEADERS = [
   "Run ID",
@@ -32,8 +33,11 @@ export default function AgentRunsTable({ runs }) {
           {runs.map((run) => (
             <tr
               key={run.id}
-              onClick={() => navigate(`/agent-runs/${run.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
+              {...interactiveRowProps(
+                () => navigate(`/agent-runs/${run.id}`),
+                `Open agent run ${run.id} (${run.agent_name})`,
+              )}
+              className={INTERACTIVE_ROW_CLASS}
             >
               <td className="px-4 py-3 font-mono text-gray-400">#{run.id}</td>
               <td className="px-4 py-3 font-medium text-gray-200">{run.agent_name}</td>

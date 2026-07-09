@@ -12,10 +12,11 @@ export default function SearchInput({ value, onChange, placeholder = "Search…"
         <path d="M14 14l4 4" strokeLinecap="round" />
       </svg>
       <input
-        type="text"
+        type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={placeholder}
         className="w-full rounded-lg border border-ink-500 bg-ink-800 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-600 outline-none transition-colors focus:border-accent"
       />
     </div>

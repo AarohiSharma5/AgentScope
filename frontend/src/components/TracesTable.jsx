@@ -2,14 +2,15 @@ import { memo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "./StatusBadge.jsx";
 import { fmtCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../lib/rowInteraction.js";
 
 // Memoized row so re-renders (e.g. periodic dashboard refreshes) only touch
 // rows whose data actually changed, keeping large trace pages responsive.
 const TraceRow = memo(function TraceRow({ trace: t, onOpen }) {
   return (
     <tr
-      onClick={() => onOpen(t.id)}
-      className="cursor-pointer transition-colors hover:bg-ink-600"
+      {...interactiveRowProps(() => onOpen(t.id), `Open trace ${t.id} (${t.model_name})`)}
+      className={INTERACTIVE_ROW_CLASS}
     >
       <td className="px-4 py-3">
         <span className="rounded-md bg-ink-500 px-2 py-1 font-mono text-xs text-gray-300">

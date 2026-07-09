@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "../StatusBadge.jsx";
 import { fmtCost, fmtLatency, fmtTime } from "../../lib/format.js";
+import { INTERACTIVE_ROW_CLASS, interactiveRowProps } from "../../lib/rowInteraction.js";
 
 const HEADERS = ["Replay", "Model", "Status", "Latency", "Cost", "Original", "Created", ""];
 
@@ -23,8 +24,8 @@ export default function ReplaysTable({ replays, onReplayAgain, busyId }) {
           {replays.map((r) => (
             <tr
               key={r.id}
-              onClick={() => navigate(`/replays/${r.id}`)}
-              className="cursor-pointer transition-colors hover:bg-ink-600"
+              {...interactiveRowProps(() => navigate(`/replays/${r.id}`), `Open replay ${r.id}`)}
+              className={INTERACTIVE_ROW_CLASS}
             >
               <td className="px-4 py-3 font-mono text-gray-400">#{r.id}</td>
               <td className="px-4 py-3 font-medium text-gray-200">
