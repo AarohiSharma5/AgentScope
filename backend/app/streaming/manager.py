@@ -54,9 +54,15 @@ class Subscriber:
         queue_size: int = DEFAULT_QUEUE_SIZE,
         heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
         max_dropped: int = DEFAULT_MAX_DROPPED,
+        org_scope: Optional[int] = None,
     ) -> None:
         self.id = subscriber_id
         self.topics = topics
+        # Tenant this client may see. ``None`` means unscoped (auth off, or a
+        # super-admin) and receives every event; a concrete org receives only
+        # its own; a sentinel org that matches nothing (see auth.tenant_scope)
+        # receives nothing.
+        self.org_scope = org_scope
         self.heartbeat_interval = heartbeat_interval
         self.max_dropped = max_dropped
         self.dropped = 0
@@ -69,10 +75,18 @@ class Subscriber:
         return self._closed.is_set()
 
     def wants(self, event: Event) -> bool:
-        """Whether this subscriber's filter matches the event."""
+        """Whether this subscriber may see, and has subscribed to, the event."""
+        if not self._org_visible(event):
+            return False
         if self.topics is None:
             return True
         return event.type in self.topics or event.topic in self.topics
+
+    def _org_visible(self, event: Event) -> bool:
+        """Tenant visibility: unscoped viewers see all; others only their org."""
+        if self.org_scope is None:
+            return True
+        return event.organization_id == self.org_scope
 
     def put(self, event: Event) -> bool:
         """Enqueue an event (non-blocking). Returns False if dropped/closed.
@@ -156,14 +170,21 @@ class LiveTraceManager:
         last_event_id: Optional[int] = None,
         queue_size: Optional[int] = None,
         heartbeat_interval: Optional[float] = None,
+        org_scope: Optional[int] = None,
     ) -> Subscriber:
-        """Register a subscriber, replaying missed events after ``last_event_id``."""
+        """Register a subscriber, replaying missed events after ``last_event_id``.
+
+        ``org_scope`` (captured from the caller's tenant scope at subscribe time)
+        restricts which tenant's events this subscriber receives, including the
+        replayed history below.
+        """
         subscriber = Subscriber(
             subscriber_id=next(self._sub_ids),
             topics=topics,
             queue_size=queue_size or self.queue_size,
             heartbeat_interval=heartbeat_interval or self.heartbeat_interval,
             max_dropped=self.max_dropped,
+            org_scope=org_scope,
         )
         with self._lock:
             self._subscribers[subscriber.id] = subscriber
@@ -185,11 +206,19 @@ class LiveTraceManager:
 
     # -- Publishing ---------------------------------------------------------
 
-    def publish(self, event_type: str, data: Optional[dict] = None, **fields) -> Event:
+    def publish(
+        self,
+        event_type: str,
+        data: Optional[dict] = None,
+        organization_id: Optional[int] = None,
+        **fields,
+    ) -> Event:
         """Build, store and fan out an event to all matching subscribers."""
         payload = dict(data or {})
         payload.update(fields)
-        event = new_event(next(self._event_ids), event_type, payload)
+        event = new_event(
+            next(self._event_ids), event_type, payload, organization_id=organization_id
+        )
 
         with self._lock:
             self._history.append(event)
@@ -200,14 +229,20 @@ class LiveTraceManager:
                 subscriber.put(event)
         return event
 
-    def emit(self, event_type: str, data: Optional[dict] = None, **fields) -> Optional[Event]:
+    def emit(
+        self,
+        event_type: str,
+        data: Optional[dict] = None,
+        organization_id: Optional[int] = None,
+        **fields,
+    ) -> Optional[Event]:
         """Exception-safe :meth:`publish` for use from the service layer.
 
         Emission must never disrupt persistence, so any failure here is logged
         and swallowed. Returns the event, or ``None`` on failure.
         """
         try:
-            return self.publish(event_type, data, **fields)
+            return self.publish(event_type, data, organization_id=organization_id, **fields)
         except Exception:  # noqa: BLE001 - streaming must never break the caller
             logger.exception("failed to emit stream event %s", event_type)
             return None
@@ -255,9 +290,35 @@ class LiveTraceManager:
 live_trace_manager = LiveTraceManager()
 
 
-def emit(event_type: str, data: Optional[dict] = None, **fields) -> Optional[Event]:
-    """Module-level, exception-safe emit against the process singleton."""
-    return live_trace_manager.emit(event_type, data, **fields)
+def _writer_org_id() -> Optional[int]:
+    """Active organization of the principal producing this event (best-effort).
+
+    Resolved lazily to avoid an import cycle and to stay safe outside a request
+    context (returns ``None``, so the event is visible only to unscoped viewers
+    rather than leaking to the wrong tenant).
+    """
+    try:
+        from ..auth.context import current_organization_id
+
+        return current_organization_id()
+    except Exception:  # noqa: BLE001 - never let tagging break emission
+        return None
+
+
+def emit(
+    event_type: str,
+    data: Optional[dict] = None,
+    organization_id: Optional[int] = None,
+    **fields,
+) -> Optional[Event]:
+    """Module-level, exception-safe emit against the process singleton.
+
+    The event is tagged with the writing principal's active organization so the
+    hub can fan it out only to same-tenant subscribers.
+    """
+    if organization_id is None:
+        organization_id = _writer_org_id()
+    return live_trace_manager.emit(event_type, data, organization_id=organization_id, **fields)
 
 
 __all__ = ["LiveTraceManager", "Subscriber", "live_trace_manager", "emit", "EventType"]

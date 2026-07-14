@@ -92,6 +92,62 @@ def test_exact_event_type_filtering():
     mgr.unsubscribe(sub)
 
 
+# -- Manager: tenant isolation (C4) -----------------------------------------
+
+
+def test_org_scoped_subscriber_only_receives_its_own_tenant():
+    """A subscriber bound to org 1 never sees org 2's or untagged events."""
+    mgr = LiveTraceManager(heartbeat_interval=0.05)
+    sub = mgr.subscribe(org_scope=1)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=1)     # match
+    mgr.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=2)     # other tenant
+    mgr.publish(EventType.TRACE_STARTED, {"n": 3}, organization_id=None)  # untagged
+
+    gen = sub.stream()
+    assert next(gen).data == {"n": 1}
+    # Nothing else is visible -> next yield is a heartbeat, not another tenant's event.
+    assert next(gen).type == EventType.HEARTBEAT
+    mgr.unsubscribe(sub)
+
+
+def test_unscoped_subscriber_sees_all_tenants():
+    """An unscoped viewer (auth off / super-admin) still sees every event."""
+    mgr = LiveTraceManager(queue_size=100, heartbeat_interval=5)
+    sub = mgr.subscribe()  # org_scope=None
+    mgr.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=1)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=2)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 3}, organization_id=None)
+
+    gen = sub.stream()
+    assert {next(gen).data["n"] for _ in range(3)} == {1, 2, 3}
+    mgr.unsubscribe(sub)
+
+
+def test_no_tenant_scope_sees_nothing():
+    """A deny-by-default scope (sentinel org no event carries) receives nothing."""
+    mgr = LiveTraceManager(heartbeat_interval=0.05)
+    sub = mgr.subscribe(org_scope=-1)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=1)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=None)
+    assert next(sub.stream()).type == EventType.HEARTBEAT
+    mgr.unsubscribe(sub)
+
+
+def test_reconnect_replay_is_tenant_scoped():
+    """History replay on reconnect is filtered to the subscriber's org too."""
+    mgr = LiveTraceManager(heartbeat_interval=0.05)
+    e1 = mgr.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=1)
+    mgr.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=2)  # must not replay
+    e3 = mgr.publish(EventType.AGENT_STARTED, {"n": 3}, organization_id=1)
+
+    sub = mgr.subscribe(last_event_id=e1.id, org_scope=1)
+    gen = sub.stream()
+    replayed = next(gen)
+    assert replayed.id == e3.id and replayed.data == {"n": 3}
+    assert next(gen).type == EventType.HEARTBEAT  # org 2's event was skipped
+    mgr.unsubscribe(sub)
+
+
 # -- Manager: backpressure --------------------------------------------------
 
 
@@ -388,6 +444,14 @@ def test_websocket_handler_streams_and_disconnects(app, reset_global_manager):
 
 
 # -- Emission integration (non-breaking) ------------------------------------
+
+
+def test_module_emit_tags_org_none_outside_request(reset_global_manager):
+    """Outside a request the writer's org is unknown -> untagged (safe default)."""
+    from app.streaming.manager import emit as module_emit
+
+    ev = module_emit(EventType.TRACE_STARTED, {"trace_id": 1})
+    assert ev is not None and ev.organization_id is None
 
 
 def test_create_trace_emits_started_event(app_ctx, reset_global_manager):

@@ -54,19 +54,39 @@ alembic upgrade head                # create/upgrade the schema
 
 ## Backend server
 
-The Docker image serves the app with **gunicorn using threaded (`gthread`)
-workers** and an extended timeout, which is required for long-lived SSE and
-WebSocket connections. A typical command:
+The Docker image serves the app with a **single gunicorn threaded (`gthread`)
+worker** and an extended timeout. Threads keep long-lived SSE/WebSocket
+connections cheap (one thread each, not a whole worker); the single worker is
+deliberate (see streaming caveat below). A typical command:
 
 ```bash
-gunicorn --worker-class gthread --workers 2 --threads 8 \
+gunicorn --worker-class gthread --workers 1 --threads 32 \
          --timeout 120 --bind 0.0.0.0:8000 "app:create_app()"
 ```
 
-Scale by adding workers/replicas behind a load balancer. Because the streaming
-rate limiter and `LiveTraceManager` are **in-process**, each worker keeps its own
-live-subscriber set and rate-limit windows — fine for most deployments; use
-sticky sessions for SSE, or a shared broker if you need cross-worker fan-out.
+### Streaming and scaling (important)
+
+The real-time hub (`LiveTraceManager`) and the auth rate limiter are
+**in-process**: their state lives in one worker's memory. Consequences for the
+streaming endpoints (`/api/stream`, `/api/ws`):
+
+- **Run streaming on a single worker.** Events are fanned out only to
+  subscribers connected to the *same* worker that emitted them. With multiple
+  workers, a live client silently misses every event produced on another worker
+  (roughly `1 − 1/workers` of them), and `Last-Event-ID` replay only covers one
+  worker's history buffer. The default image therefore runs `--workers 1`.
+- **A single threaded worker scales vertically** (tens of thousands of
+  concurrent SSE/WS connections and ample REST throughput for typical
+  dashboards) because threads, not workers, carry the streams.
+- **To scale out to multiple workers/replicas,** put a shared broker
+  (Redis/NATS pub/sub) behind the hub so every worker sees every event, and use
+  a shared rate-limit store. Until then, keep one worker (add sticky sessions if
+  a load balancer sits in front). The non-streaming REST API is stateless and
+  safe to scale horizontally on its own.
+
+Every event is tagged with its owning organization at emit time and a stream
+only ever delivers its subscriber's own tenant's events (matching the tenant
+isolation on the REST API).
 
 ## Configuration reference
 

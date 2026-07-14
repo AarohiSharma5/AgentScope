@@ -14,8 +14,10 @@ COPY . .
 EXPOSE 8000
 
 # Production WSGI server. run.py exposes `app = create_app()`.
-# Threaded (gthread) workers so long-lived SSE/WebSocket streams (v0.6) each
-# hold a thread instead of an entire worker, and a higher timeout so streaming
-# connections are not reaped mid-stream. Backward compatible with all existing
-# REST endpoints.
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "-k", "gthread", "-w", "2", "--threads", "16", "--timeout", "120", "run:app"]
+# A SINGLE threaded (gthread) worker with many threads: long-lived SSE/WebSocket
+# streams (v0.6) each hold a thread, and the extended timeout keeps them from
+# being reaped mid-stream. One worker is deliberate — the LiveTraceManager hub
+# is in-process, so with multiple workers a client would miss events emitted on
+# other workers. To scale horizontally, put a shared broker (Redis/NATS) behind
+# the hub; see docs/deployment.md. All REST endpoints work unchanged.
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "-k", "gthread", "-w", "1", "--threads", "32", "--timeout", "120", "run:app"]

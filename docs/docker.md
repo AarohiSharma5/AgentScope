@@ -63,10 +63,16 @@ see [Installation](installation.md#configuration-overview) and
 
 ## Streaming & threaded workers
 
-The backend image runs gunicorn with **threaded (`gthread`) workers** and an
-extended timeout so long-lived SSE/WebSocket connections stay open. If you tune
-gunicorn yourself, keep threaded workers for the `/api/stream` and `/api/ws`
-endpoints to work correctly.
+The backend image runs gunicorn with a **single threaded (`gthread`) worker**
+and an extended timeout so long-lived SSE/WebSocket connections stay open. Two
+constraints matter if you tune gunicorn yourself:
+
+- Keep **threaded** workers so `/api/stream` and `/api/ws` don't tie up a whole
+  worker per connection.
+- Keep it to **one worker**. The real-time hub is in-process, so extra workers
+  would each only see their own events and live clients would miss the rest. To
+  run multiple workers/replicas, add a shared broker (Redis/NATS) — see
+  [Deployment → Streaming and scaling](deployment.md#streaming-and-scaling-important).
 
 ## Production notes
 

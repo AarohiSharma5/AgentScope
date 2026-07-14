@@ -65,6 +65,11 @@ class Event:
     type: str
     data: dict
     timestamp: str
+    # Owning tenant, used to fan out only to same-org subscribers. ``None`` means
+    # untenanted (auth off, or emitted without a request context) and is visible
+    # only to unscoped viewers. It is kept off the wire (not in ``to_dict``) so a
+    # client never sees another tenant's id.
+    organization_id: Optional[int] = None
     # Lazily-computed, cached wire encodings. A single broadcast event is
     # delivered to every subscriber and serialized once per subscriber; caching
     # collapses that to one json.dumps regardless of the fan-out size.
@@ -96,13 +101,19 @@ class Event:
         return self._sse
 
 
-def new_event(event_id: int, event_type: str, data: Optional[dict] = None) -> Event:
+def new_event(
+    event_id: int,
+    event_type: str,
+    data: Optional[dict] = None,
+    organization_id: Optional[int] = None,
+) -> Event:
     """Build an :class:`Event` with the current UTC timestamp."""
     return Event(
         id=event_id,
         type=event_type,
         data=data or {},
         timestamp=utcnow().isoformat(),
+        organization_id=organization_id,
     )
 
 

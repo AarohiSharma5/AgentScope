@@ -18,6 +18,7 @@ from urllib.parse import parse_qs
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
+from ..auth.context import tenant_scope
 from ..streaming import EventType, live_trace_manager, parse_topics
 
 logger = logging.getLogger("agentscope")
@@ -52,6 +53,9 @@ def sse_stream():
         topics=parse_topics(request.args.get("events")),
         last_event_id=_last_event_id_from_request(),
         heartbeat_interval=_heartbeat_interval(),
+        # Snapshot the caller's tenant now (in request context) so the long-lived
+        # stream only ever fans out this tenant's events.
+        org_scope=tenant_scope(),
     )
 
     @stream_with_context
@@ -112,6 +116,7 @@ def register_websocket(sock) -> None:
                     "STREAM_HEARTBEAT_INTERVAL", live_trace_manager.heartbeat_interval
                 )
             ),
+            org_scope=tenant_scope(),
         )
         try:
             for event in subscriber.stream():

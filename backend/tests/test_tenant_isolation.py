@@ -240,3 +240,38 @@ def test_cached_metrics_are_keyed_per_tenant(tmp_path):
             db.session.remove()
             db.drop_all()
         clear_cache()
+
+
+def test_live_stream_events_are_tenant_scoped(tenant_app):
+    """Guards C4: an org's writes emit events tagged with that org, and a stream
+    only fans out its own tenant's events (never another org's)."""
+    from app.streaming import EventType
+    from app.streaming.manager import live_trace_manager
+
+    key_a = _org_key(tenant_app, "a@acme.test", "Acme")
+    with tenant_app.app_context():
+        user_a = auth_service.get_user_by_email("a@acme.test")
+        org_a_id = auth_service.list_user_organizations(user_a)[0].id
+
+    live_trace_manager.reset()
+    # One watcher scoped to org A, one scoped to a different org.
+    watcher_a = live_trace_manager.subscribe(org_scope=org_a_id, heartbeat_interval=0.1)
+    watcher_other = live_trace_manager.subscribe(org_scope=org_a_id + 999, heartbeat_interval=0.1)
+    try:
+        client = tenant_app.test_client()
+        resp = client.post(
+            "/api/traces",
+            json={"model_name": "gpt-4o", "user_prompt": "A"},
+            headers={"X-API-Key": key_a},
+        )
+        assert resp.status_code == 201
+
+        # Org A's watcher receives the event, tagged with org A.
+        event = next(watcher_a.stream())
+        assert event.type == EventType.TRACE_STARTED
+        assert event.organization_id == org_a_id
+
+        # A watcher for a different org gets nothing but a heartbeat.
+        assert next(watcher_other.stream()).type == EventType.HEARTBEAT
+    finally:
+        live_trace_manager.reset()

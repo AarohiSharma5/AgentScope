@@ -98,7 +98,9 @@ def tenant_scope() -> Optional[int]:
         return None
     identity = current_identity()
     if identity is None:
-        return None
+        # Auth is enforced but no principal resolved on this request: deny by
+        # default rather than fall through to "see everything".
+        return _NO_TENANT
     if identity.organization_id is not None:
         return identity.organization_id
     if identity.is_superadmin:
