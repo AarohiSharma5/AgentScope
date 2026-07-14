@@ -13,6 +13,7 @@ from app.models.workflow_trace import (
 from app.orchestration import (
     CancellationToken,
     WorkflowEngine,
+    WorkflowError,
     WorkflowValidationError,
     validate_workflow,
 )
@@ -404,3 +405,58 @@ def test_per_node_timeout_with_retry(app_ctx):
 
     assert result.ok
     assert calls["n"] == 2
+
+
+def test_per_node_timeout_is_advisory_and_runs_to_completion(app_ctx):
+    """A node that overruns its advisory timeout runs fully, then fails (no retry).
+
+    Guards C5: the handler is never abandoned on a helper thread, so it always
+    completes exactly once and cannot leak a zombie that mutates the context.
+    """
+    engine = WorkflowEngine()
+    calls = {"n": 0}
+
+    def slow(ctx):
+        calls["n"] += 1
+        time.sleep(0.08)  # exceeds the 20ms advisory budget
+        ctx.set("did_run", True)
+        return "done"
+
+    spec = {
+        "entry": "task",
+        "nodes": {
+            "task": {"type": "task", "role": "worker", "timeout_ms": 20, "next": "done"},
+            "done": {"type": "end"},
+        },
+    }
+    result = engine.run(spec, handlers={"task": slow})
+
+    assert result.status == AgentStatus.FAILED
+    assert isinstance(result.error, WorkflowError)
+    assert calls["n"] == 1  # ran exactly once, to completion
+    assert result.context.get("did_run") is True
+
+
+def test_handler_can_cooperatively_cancel_via_context(app_ctx):
+    """A long-running handler can observe cancellation through the shared context."""
+    engine = WorkflowEngine()
+    token = CancellationToken()
+    observed = {}
+
+    def worker(ctx):
+        observed["before"] = ctx.cancelled
+        token.cancel()  # simulate an external cancel request mid-work
+        observed["after"] = ctx.cancelled
+        return "partial"
+
+    result = engine.run(
+        _sequential_spec(),
+        handlers={"planner": worker},
+        cancel_token=token,
+    )
+
+    assert observed == {"before": False, "after": True}
+    # The cooperative check flips as soon as the token is set; the engine then
+    # stops at the next node boundary.
+    assert result.status == AgentStatus.CANCELLED
+    assert result.visited == ["planner"]

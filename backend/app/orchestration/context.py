@@ -18,6 +18,24 @@ class AgentContext:
     def __init__(self, initial: Optional[Mapping[str, Any]] = None) -> None:
         self._data: dict[str, Any] = dict(initial or {})
         self._lock = threading.RLock()
+        # Optional workflow cancel token, bound by the engine so handlers can
+        # cooperatively stop in-flight work (threads can't be preempted).
+        self._cancel_token: Any = None
+
+    def bind_cancel_token(self, token: Any) -> None:
+        """Attach the running workflow's cancellation token (used by the engine)."""
+        self._cancel_token = token
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the running workflow has requested cancellation.
+
+        Long-running handlers should poll this and return promptly when true;
+        it is the only reliable way to interrupt in-flight work, since the
+        engine cannot forcibly kill a running handler thread.
+        """
+        token = self._cancel_token
+        return bool(token is not None and token.cancelled)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return the value for ``key``, or ``default`` if absent."""

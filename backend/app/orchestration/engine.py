@@ -39,7 +39,8 @@ Workflow JSON format
 Node types
 ----------
 * ``task``      -- run a handler, traced as one agent. Supports ``retries`` and
-                   per-node ``timeout_ms``. ``next`` names the following node.
+                   an *advisory* per-node ``timeout_ms`` (see Handlers below).
+                   ``next`` names the following node.
 * ``parallel``  -- run ``branches`` (each a task node) concurrently, then
                    continue at ``next``.
 * ``condition`` -- branch to ``if_true`` / ``if_false`` based on ``when`` (a
@@ -57,14 +58,19 @@ data between nodes (e.g. a task sets ``context["confidence"]`` that a downstream
 condition reads). Missing handlers fall back to ``default_handler`` (a no-op),
 so a workflow's control flow and tracing can be exercised without real models.
 
+Timeouts & cancellation are cooperative. Handlers run inline (never on a helper
+thread that could be abandoned), so ``timeout_ms`` is advisory: a node that
+overruns is reported as a :class:`NodeTimeout` *after* the handler returns, and
+the overall ``timeout_ms`` / ``cancel_token`` are enforced between nodes. A
+long-running handler that must stop early should check ``context.cancelled``
+(the run's cancel token is bound to the context) and return promptly.
+
 Must be used inside a Flask application context.
 """
 import logging
 import operator
 import threading
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
 from time import perf_counter
 from typing import Any, Callable, Optional, Union
 
@@ -299,6 +305,10 @@ class WorkflowEngine:
             workflow_definition_id=definition.id,
         )
         ctx = orchestrator.context
+        # Expose the cancel token so long-running handlers can cooperate
+        # (``if ctx.cancelled: return``) — the only way to actually stop
+        # in-flight work, since threads can't be preempted.
+        ctx.bind_cancel_token(token)
         nodes = spec["nodes"]
 
         started = perf_counter()
@@ -449,29 +459,33 @@ class WorkflowEngine:
     # -- Helpers ------------------------------------------------------------
 
     def _wrap(self, handler: Optional[Handler], ctx, node_timeout: Optional[float]):
-        """Wrap a handler into a zero-arg callable, enforcing per-node timeout."""
+        """Wrap a handler into a zero-arg callable with an *advisory* timeout.
+
+        Handlers run **inline** on the calling thread. We deliberately do not
+        run them on a helper thread with ``future.result(timeout=...)``: a
+        running Python thread cannot be preempted, so abandoning it on timeout
+        would leak a "zombie" that keeps mutating the shared ``AgentContext``
+        (corrupting state the workflow has moved past) and would allocate a new
+        thread pool per node / retry / parallel branch — unbounded growth under
+        load.
+
+        Instead ``timeout_ms`` is advisory: the handler runs to completion and,
+        if it overran its budget, :class:`NodeTimeout` is raised afterwards (the
+        caller may retry). Handlers that need to stop early should cooperate by
+        checking ``ctx.cancelled`` (the workflow's cancel token is bound to the
+        context) or enforce their own I/O timeouts.
+        """
 
         def work():
             if handler is None:
                 return None
-            if not node_timeout:
-                return handler(ctx)
-            executor = ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(handler, ctx)
-            try:
-                return future.result(timeout=node_timeout / 1000)
-            except FuturesTimeout as exc:
-                future.cancel()
-                raise NodeTimeout(f"node timed out after {node_timeout}ms") from exc
-            finally:
-                # Do not block the workflow waiting for a runaway handler. A
-                # running Python thread can't be force-killed, so we stop
-                # waiting (wait=False) and let it finish in the background;
-                # cancel_futures drops any work that never started. Previously
-                # the `with` block's implicit shutdown(wait=True) meant a
-                # timed-out node still blocked until the handler returned,
-                # defeating the timeout.
-                executor.shutdown(wait=False, cancel_futures=True)
+            started = perf_counter()
+            result = handler(ctx)
+            if node_timeout and (perf_counter() - started) * 1000 > node_timeout:
+                raise NodeTimeout(
+                    f"node exceeded its advisory timeout of {node_timeout}ms"
+                )
+            return result
 
         return work
 
