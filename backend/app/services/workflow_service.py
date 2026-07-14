@@ -21,6 +21,7 @@ from ..models.workflow_trace import (
     WorkflowExecution,
 )
 from ..streaming import EventType, emit
+from ..utils.cache import cached
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
 from ..utils.validation import ensure_json_object
@@ -413,26 +414,38 @@ def get_conversation(conversation_id: int) -> Optional[ConversationRun]:
 
 
 def get_workflow_metrics() -> dict:
-    """Compute aggregate multi-agent workflow metrics for the dashboard.
+    """Aggregate multi-agent workflow metrics for the dashboard (tenant-scoped)."""
+    return _workflow_metrics_for_org(_tenant_scope())
+
+
+@cached()
+def _workflow_metrics_for_org(organization_id: Optional[int] = None) -> dict:
+    """Compute aggregate workflow metrics for one org (or all).
 
     The unit of a "workflow" here is a :class:`ConversationRun` (one run of a
     multi-agent workflow). ``total_agents`` counts agent nodes; cost is summed
-    from the underlying agent-run steps.
+    from the underlying agent-run steps. When ``organization_id`` is set,
+    conversation-owned rows filter on their org and child tables (nodes,
+    messages, steps) join up to their owning conversation/run. Cached for a few
+    seconds (keyed by org) to absorb concurrent dashboard traffic.
     """
-    # Tenant scope: filter conversation-owned rows on their org, and join child
-    # tables (nodes, messages, steps) up to their owning conversation/run.
-    org_id = _tenant_scope()
+
+    def _own(query):
+        """Scope a ConversationRun-rooted query to the org (no-op when unscoped)."""
+        if organization_id is None:
+            return query
+        return query.filter(ConversationRun.organization_id == organization_id)
 
     def _by_conversation(query):
-        """Join a conversation-child query to ConversationRun and scope by org."""
-        if org_id is None:
+        """Join an AgentNode query to ConversationRun and scope by org."""
+        if organization_id is None:
             return query
         return query.join(
             ConversationRun, AgentNode.conversation_run_id == ConversationRun.id
-        ).filter(ConversationRun.organization_id == org_id)
+        ).filter(ConversationRun.organization_id == organization_id)
 
-    total_workflows = _scoped(
-        db.session.query(func.count(ConversationRun.id)), ConversationRun.organization_id
+    total_workflows = _own(
+        db.session.query(func.count(ConversationRun.id))
     ).scalar() or 0
     total_agents = _by_conversation(
         db.session.query(func.count(AgentNode.id))
@@ -451,10 +464,10 @@ def get_workflow_metrics() -> dict:
         }
 
     messages_query = db.session.query(func.count(AgentMessage.id))
-    if org_id is not None:
+    if organization_id is not None:
         messages_query = messages_query.join(
             ConversationRun, AgentMessage.conversation_run_id == ConversationRun.id
-        ).filter(ConversationRun.organization_id == org_id)
+        ).filter(ConversationRun.organization_id == organization_id)
     total_messages = messages_query.scalar() or 0
 
     # Parallel branches: average size of a parallel group (nodes sharing one
@@ -468,21 +481,17 @@ def get_workflow_metrics() -> dict:
         .filter(AgentNode.parallel_group.isnot(None))
     ).scalar() or 0
 
-    avg_latency = _scoped(
-        db.session.query(func.avg(ConversationRun.latency_ms)),
-        ConversationRun.organization_id,
+    avg_latency = _own(
+        db.session.query(func.avg(ConversationRun.latency_ms))
     ).scalar() or 0
     cost_query = db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0))
-    if org_id is not None:
+    if organization_id is not None:
         cost_query = cost_query.join(
             AgentRun, AgentStep.agent_run_id == AgentRun.id
-        ).filter(AgentRun.organization_id == org_id)
+        ).filter(AgentRun.organization_id == organization_id)
     total_cost = cost_query.scalar() or 0
     success_workflows = (
-        _scoped(
-            db.session.query(func.count(ConversationRun.id)),
-            ConversationRun.organization_id,
-        )
+        _own(db.session.query(func.count(ConversationRun.id)))
         .filter(ConversationRun.status == AgentStatus.SUCCESS)
         .scalar()
         or 0

@@ -200,3 +200,43 @@ def test_jwt_multi_org_requires_active_org_selection(tenant_app):
 
     # A header for an org the user does not belong to -> 403.
     assert client.get("/api/traces", headers={**auth, "X-Organization-Id": "99999"}).status_code == 403
+
+
+def test_cached_metrics_are_keyed_per_tenant(tmp_path):
+    """With caching ENABLED, one org's cached metrics never bleed into another's.
+
+    Guards C3: the per-org metric caches key on organization_id, so warming
+    org A's entry must not serve A's totals to org B within the TTL window.
+    """
+    from app.utils.cache import clear_cache
+
+    class _C(Config):
+        TESTING = True
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'cache.db'}"
+        METRICS_CACHE_TTL = 30  # caching ON (the tenant_app fixture disables it)
+        AUTH_ENABLED = True
+        SECRET_KEY = _STRONG
+        JWT_SECRET = _STRONG
+
+    app = create_app(_C)
+    clear_cache()
+    try:
+        key_a = _org_key(app, "a@acme.test", "Acme")
+        key_b = _org_key(app, "b@beta.test", "Beta")
+        client = app.test_client()
+
+        # Org A: one agent run; org B: two.
+        client.post("/api/agent-runs", json=_agent_run_payload("A1"), headers={"X-API-Key": key_a})
+        client.post("/api/agent-runs", json=_agent_run_payload("B1"), headers={"X-API-Key": key_b})
+        client.post("/api/agent-runs", json=_agent_run_payload("B2"), headers={"X-API-Key": key_b})
+
+        # Warm A's cache entry first; B must compute its own, not reuse A's.
+        a = client.get("/api/dashboard/agent-metrics", headers={"X-API-Key": key_a}).get_json()
+        b = client.get("/api/dashboard/agent-metrics", headers={"X-API-Key": key_b}).get_json()
+        assert a["total_agent_runs"] == 1
+        assert b["total_agent_runs"] == 2
+    finally:
+        with app.app_context():
+            db.session.remove()
+            db.drop_all()
+        clear_cache()
