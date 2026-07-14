@@ -4,7 +4,7 @@ Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.51
 # Database schema migrations (production uses `alembic upgrade head`).
 alembic==1.13.2
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.12
 python-dotenv==1.0.1
 gunicorn==26.0.0
 
