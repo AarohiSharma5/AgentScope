@@ -19,6 +19,7 @@ from ..evaluation.evaluators import Metrics
 from ..extensions import db
 from ..models.agent_trace import AgentStatus
 from ..models.evaluation_trace import EvaluationMetric, EvaluationRun
+from ..models.workflow_trace import ConversationRun
 from ..services import replay_service
 from ..streaming import EventType, emit
 from ..utils.sorting import apply_sort, is_valid_sort
@@ -26,6 +27,29 @@ from ..utils.timeutils import utcnow
 from ..utils.validation import ensure_json_object
 
 logger = logging.getLogger("agentscope")
+
+
+def _tenant_scope() -> Optional[int]:
+    """Organization id reads should be restricted to, or None for no scoping."""
+    from ..auth.context import tenant_scope
+
+    return tenant_scope()
+
+
+def _scoped(query, column):
+    """Filter ``query`` to the caller's tenant on ``column`` (no-op when unscoped)."""
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(column == org_id)
+    return query
+
+
+def _org_of_conversation(conversation_run_id: Optional[int]) -> Optional[int]:
+    """Organization of a conversation run, used to stamp its evaluations."""
+    if conversation_run_id is None:
+        return None
+    conversation = db.session.get(ConversationRun, conversation_run_id)
+    return conversation.organization_id if conversation is not None else None
 
 
 # -- EvaluationRun ----------------------------------------------------------
@@ -47,6 +71,7 @@ def create_evaluation_run(
         status=status,
         started_at=started_at or utcnow(),
         evaluation_metadata=ensure_json_object(metadata, "metadata"),
+        organization_id=_org_of_conversation(conversation_run_id),
     )
     db.session.add(run)
     db.session.commit()
@@ -126,13 +151,19 @@ def finish_evaluation_run(
 
 
 def get_evaluation_run(evaluation_run_id: int) -> Optional[EvaluationRun]:
-    """Return an evaluation run eager-loaded with its metrics, or None."""
-    return (
+    """Return an evaluation run eager-loaded with its metrics, or None (tenant-scoped)."""
+    run = (
         db.session.query(EvaluationRun)
         .options(selectinload(EvaluationRun.metrics))
         .filter(EvaluationRun.id == evaluation_run_id)
         .one_or_none()
     )
+    if run is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and run.organization_id != org_id:
+        return None
+    return run
 
 
 EVALUATION_SORTABLE = {"created_at", "started_at", "finished_at", "overall_score", "status"}
@@ -158,7 +189,10 @@ def list_evaluation_runs(
     ``q`` performs a case-insensitive search across the evaluation type and the
     (judge) model name.
     """
-    query = EvaluationRun.query.options(selectinload(EvaluationRun.metrics))
+    query = _scoped(
+        EvaluationRun.query.options(selectinload(EvaluationRun.metrics)),
+        EvaluationRun.organization_id,
+    )
     if conversation_run_id is not None:
         query = query.filter(EvaluationRun.conversation_run_id == conversation_run_id)
     if evaluation_type is not None:
@@ -190,27 +224,42 @@ def get_evaluation_metrics() -> dict:
     faithfulness, groundedness, tool accuracy, memory usage) and the evaluation
     success rate.
     """
-    total = db.session.query(func.count(EvaluationRun.id)).scalar() or 0
+    org_id = _tenant_scope()
+    total = _scoped(
+        db.session.query(func.count(EvaluationRun.id)), EvaluationRun.organization_id
+    ).scalar() or 0
     success = (
-        db.session.query(func.count(EvaluationRun.id))
+        _scoped(
+            db.session.query(func.count(EvaluationRun.id)),
+            EvaluationRun.organization_id,
+        )
         .filter(EvaluationRun.status == AgentStatus.SUCCESS)
         .scalar()
         or 0
     )
-    avg_score = db.session.query(func.avg(EvaluationRun.overall_score)).scalar()
+    avg_score = _scoped(
+        db.session.query(func.avg(EvaluationRun.overall_score)),
+        EvaluationRun.organization_id,
+    ).scalar()
 
-    metric_rows = (
-        db.session.query(
-            EvaluationMetric.metric_name, func.avg(EvaluationMetric.metric_value)
-        )
-        .group_by(EvaluationMetric.metric_name)
-        .all()
+    metric_query = db.session.query(
+        EvaluationMetric.metric_name, func.avg(EvaluationMetric.metric_value)
     )
+    if org_id is not None:
+        metric_query = metric_query.join(
+            EvaluationRun, EvaluationMetric.evaluation_run_id == EvaluationRun.id
+        ).filter(EvaluationRun.organization_id == org_id)
+    metric_rows = metric_query.group_by(EvaluationMetric.metric_name).all()
     by_metric = {name: _round(value, 4) for name, value in metric_rows}
 
     conversation_ids = [
         row[0]
-        for row in db.session.query(EvaluationRun.conversation_run_id).distinct().all()
+        for row in _scoped(
+            db.session.query(EvaluationRun.conversation_run_id),
+            EvaluationRun.organization_id,
+        )
+        .distinct()
+        .all()
     ]
     costs: list[float] = []
     latencies: list[float] = []
@@ -243,7 +292,11 @@ def get_evaluation_analytics() -> dict:
     ``conversation_totals``), alongside the average evaluation score and the
     failure rate. The headline block reuses :func:`get_evaluation_metrics`.
     """
-    runs = EvaluationRun.query.order_by(EvaluationRun.created_at.asc()).all()
+    runs = (
+        _scoped(EvaluationRun.query, EvaluationRun.organization_id)
+        .order_by(EvaluationRun.created_at.asc())
+        .all()
+    )
 
     buckets: dict[str, dict] = {}
     for run in runs:

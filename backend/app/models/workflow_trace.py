@@ -319,6 +319,15 @@ class WorkflowDefinition(db.Model):
 
     workflow_json = db.Column(JSON, nullable=True)
 
+    # Tenant ownership (v1.0, phase 2). Stamped from the creating principal's
+    # active org; nullable + SET NULL, mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
     updated_at = db.Column(
         db.DateTime, nullable=False, default=utcnow, onupdate=utcnow

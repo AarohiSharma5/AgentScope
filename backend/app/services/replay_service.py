@@ -32,6 +32,29 @@ from ..utils.validation import ensure_json_object
 logger = logging.getLogger("agentscope")
 
 
+def _tenant_scope() -> Optional[int]:
+    """Organization id reads should be restricted to, or None for no scoping."""
+    from ..auth.context import tenant_scope
+
+    return tenant_scope()
+
+
+def _scoped(query, column):
+    """Filter ``query`` to the caller's tenant on ``column`` (no-op when unscoped)."""
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(column == org_id)
+    return query
+
+
+def _org_of_conversation(conversation_run_id: Optional[int]) -> Optional[int]:
+    """Organization of a conversation run, used to stamp its replays/comparisons."""
+    if conversation_run_id is None:
+        return None
+    conversation = db.session.get(ConversationRun, conversation_run_id)
+    return conversation.organization_id if conversation is not None else None
+
+
 # -- ReplayRun --------------------------------------------------------------
 
 
@@ -55,6 +78,7 @@ def create_replay_run(
         status=status,
         started_at=started_at or utcnow(),
         replay_metadata=ensure_json_object(metadata, "metadata"),
+        organization_id=_org_of_conversation(original_conversation_run_id),
     )
     db.session.add(replay)
     db.session.commit()
@@ -93,8 +117,14 @@ def finish_replay_run(
 
 
 def get_replay_run(replay_run_id: int) -> Optional[ReplayRun]:
-    """Return a replay run by id, or None."""
-    return db.session.get(ReplayRun, replay_run_id)
+    """Return a replay run by id, or None (hidden when it belongs to another tenant)."""
+    replay = db.session.get(ReplayRun, replay_run_id)
+    if replay is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and replay.organization_id != org_id:
+        return None
+    return replay
 
 
 REPLAY_SORTABLE = {"created_at", "started_at", "finished_at", "latency_ms", "cost", "status"}
@@ -118,7 +148,7 @@ def list_replay_runs(
 
     ``q`` performs a case-insensitive search on the replayed model name.
     """
-    query = ReplayRun.query
+    query = _scoped(ReplayRun.query, ReplayRun.organization_id)
     if original_conversation_run_id is not None:
         query = query.filter(
             ReplayRun.original_conversation_run_id == original_conversation_run_id
@@ -158,6 +188,7 @@ def create_model_comparison(
         latency_difference=latency_difference,
         token_difference=token_difference,
         comparison_metadata=ensure_json_object(metadata, "metadata"),
+        organization_id=_org_of_conversation(conversation_run_id),
     )
     db.session.add(comparison)
     db.session.commit()
@@ -169,15 +200,21 @@ def create_model_comparison(
 
 
 def get_model_comparison(comparison_id: int) -> Optional[ModelComparison]:
-    """Return a model comparison by id, or None."""
-    return db.session.get(ModelComparison, comparison_id)
+    """Return a model comparison by id, or None (hidden when it belongs to another tenant)."""
+    comparison = db.session.get(ModelComparison, comparison_id)
+    if comparison is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and comparison.organization_id != org_id:
+        return None
+    return comparison
 
 
 def list_model_comparisons(
     conversation_run_id: Optional[int] = None,
 ) -> list[ModelComparison]:
-    """Return model comparisons, optionally scoped to one conversation."""
-    query = ModelComparison.query
+    """Return model comparisons, optionally scoped to one conversation (tenant-scoped)."""
+    query = _scoped(ModelComparison.query, ModelComparison.organization_id)
     if conversation_run_id is not None:
         query = query.filter(ModelComparison.conversation_run_id == conversation_run_id)
     return query.order_by(ModelComparison.created_at.desc()).all()
@@ -206,7 +243,7 @@ def list_comparisons(
     ``q`` performs a case-insensitive search across the two model names and the
     winner label.
     """
-    query = ModelComparison.query
+    query = _scoped(ModelComparison.query, ModelComparison.organization_id)
     if conversation_run_id is not None:
         query = query.filter(ModelComparison.conversation_run_id == conversation_run_id)
     if q:

@@ -14,10 +14,16 @@ from ..extensions import db
 from ..models.auth import ApiKey, User
 from ..utils.timeutils import utcnow
 from . import tokens
-from .errors import AuthError
+from .errors import AuthError, AuthzError
 from .keys import hash_key
 
 _IDENTITY_ATTR = "agentscope_identity"
+
+#: Sentinel organization id used to scope an authenticated-but-org-less principal
+#: to *no* rows. Organization ids are positive autoincrement values, so filtering
+#: ``organization_id == _NO_TENANT`` can never match — a deny-by-default read
+#: scope, rather than silently falling back to "see everything".
+_NO_TENANT = -1
 
 
 @dataclass
@@ -62,31 +68,42 @@ def current_identity() -> Optional[Identity]:
 
 
 def current_organization_id() -> Optional[int]:
-    """Organization of the current API-key principal, or ``None``.
+    """Active organization of the current principal, or ``None``.
 
-    Only API keys carry a single organization; JWT users may belong to several,
-    so they are intentionally not tenant-scoped in this phase. Safe to call
-    outside a request (returns ``None``).
+    Used to *stamp* ownership on writes. An API key carries a single org; a JWT
+    user's active org is resolved at authentication time (see
+    :func:`_resolve_active_org`). Safe to call outside a request (returns
+    ``None``).
     """
     if not has_request_context():
         return None
     identity = current_identity()
-    if identity is None or identity.auth_type != "api_key":
-        return None
-    return identity.organization_id
+    return identity.organization_id if identity is not None else None
 
 
 def tenant_scope() -> Optional[int]:
     """Organization id that reads should be restricted to, or ``None``.
 
-    Scoping applies only when auth is enforced (``AUTH_ENABLED``) *and* the
-    caller authenticated with an org-bound API key. Otherwise (auth off, or a
-    JWT/dashboard user) data is unscoped, preserving backward-compatible
-    single-tenant behavior.
+    Scoping only applies when auth is enforced (``AUTH_ENABLED``); with auth off,
+    reads are unscoped (backward-compatible single-tenant behavior). When on:
+
+    * a super-admin with no selected org sees everything (admin view);
+    * any principal with an active org is scoped to it (API key, or a JWT user's
+      resolved active org);
+    * an authenticated principal *without* an active org (e.g. a JWT user who
+      belongs to several orgs and did not pick one) is scoped to
+      :data:`_NO_TENANT` so they see nothing rather than every tenant's data.
     """
     if not has_request_context() or not current_app.config.get("AUTH_ENABLED"):
         return None
-    return current_organization_id()
+    identity = current_identity()
+    if identity is None:
+        return None
+    if identity.organization_id is not None:
+        return identity.organization_id
+    if identity.is_superadmin:
+        return None
+    return _NO_TENANT
 
 
 def resolve_identity() -> Optional[Identity]:
@@ -119,12 +136,46 @@ def _identity_from_jwt(token: str) -> Identity:
     user = db.session.get(User, claims.get("sub"))
     if user is None or not user.is_active:
         raise AuthError("user not found or inactive")
+    org_id, role = _resolve_active_org(user)
     return Identity(
         auth_type="jwt",
         user_id=user.id,
         email=user.email,
         is_superadmin=user.is_superadmin,
+        organization_id=org_id,
+        role=role,
     )
+
+
+def _resolve_active_org(user: User) -> tuple[Optional[int], Optional[str]]:
+    """Resolve a JWT user's active organization (and their role within it).
+
+    Priority: an explicit ``X-Organization-Id`` header (validated against the
+    user's memberships), else their sole membership when they belong to exactly
+    one organization, else unresolved (``None``). A super-admin may act in any
+    org via the header without a membership.
+    """
+    from ..models.auth import Membership
+
+    requested = request.headers.get("X-Organization-Id")
+    if requested:
+        try:
+            org_id = int(requested)
+        except (TypeError, ValueError):
+            raise AuthError("X-Organization-Id must be an integer")
+        membership = Membership.query.filter_by(
+            user_id=user.id, organization_id=org_id
+        ).first()
+        if membership is not None:
+            return org_id, membership.role
+        if user.is_superadmin:
+            return org_id, None
+        raise AuthzError("you are not a member of the requested organization")
+
+    memberships = Membership.query.filter_by(user_id=user.id).all()
+    if len(memberships) == 1:
+        return memberships[0].organization_id, memberships[0].role
+    return None, None
 
 
 def _identity_from_api_key(raw: str) -> Identity:

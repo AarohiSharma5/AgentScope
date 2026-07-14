@@ -45,6 +45,14 @@ def _tenant_scope() -> Optional[int]:
     return tenant_scope()
 
 
+def _scoped(query, column):
+    """Filter ``query`` to the caller's tenant on ``column`` (no-op when unscoped)."""
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(column == org_id)
+    return query
+
+
 def create_conversation_run(
     request_trace_id: int,
     conversation_name: Optional[str] = None,
@@ -207,6 +215,7 @@ def create_workflow_definition(
         description=description,
         version=version,
         workflow_json=ensure_json_object(workflow_json, "workflow_json"),
+        organization_id=_current_org_id(),
     )
     db.session.add(definition)
     db.session.commit()
@@ -308,7 +317,10 @@ def list_workflows(
     sort: str = "-created_at",
 ) -> tuple[list[WorkflowDefinition], int]:
     """Return a page of workflow definitions and the total matching count."""
-    query = WorkflowDefinition.query.options(selectinload(WorkflowDefinition.executions))
+    query = _scoped(
+        WorkflowDefinition.query.options(selectinload(WorkflowDefinition.executions)),
+        WorkflowDefinition.organization_id,
+    )
     if q:
         like = f"%{q}%"
         query = query.filter(
@@ -326,13 +338,19 @@ def list_workflows(
 
 
 def get_workflow(definition_id: int) -> Optional[WorkflowDefinition]:
-    """Return a workflow definition with its execution history, or None."""
-    return (
+    """Return a workflow definition with its execution history, or None (tenant-scoped)."""
+    definition = (
         db.session.query(WorkflowDefinition)
         .options(selectinload(WorkflowDefinition.executions))
         .filter(WorkflowDefinition.id == definition_id)
         .one_or_none()
     )
+    if definition is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and definition.organization_id != org_id:
+        return None
+    return definition
 
 
 def list_conversations(
@@ -401,8 +419,24 @@ def get_workflow_metrics() -> dict:
     multi-agent workflow). ``total_agents`` counts agent nodes; cost is summed
     from the underlying agent-run steps.
     """
-    total_workflows = db.session.query(func.count(ConversationRun.id)).scalar() or 0
-    total_agents = db.session.query(func.count(AgentNode.id)).scalar() or 0
+    # Tenant scope: filter conversation-owned rows on their org, and join child
+    # tables (nodes, messages, steps) up to their owning conversation/run.
+    org_id = _tenant_scope()
+
+    def _by_conversation(query):
+        """Join a conversation-child query to ConversationRun and scope by org."""
+        if org_id is None:
+            return query
+        return query.join(
+            ConversationRun, AgentNode.conversation_run_id == ConversationRun.id
+        ).filter(ConversationRun.organization_id == org_id)
+
+    total_workflows = _scoped(
+        db.session.query(func.count(ConversationRun.id)), ConversationRun.organization_id
+    ).scalar() or 0
+    total_agents = _by_conversation(
+        db.session.query(func.count(AgentNode.id))
+    ).scalar() or 0
 
     if total_workflows == 0:
         return {
@@ -416,29 +450,39 @@ def get_workflow_metrics() -> dict:
             "success_rate": 0,
         }
 
-    total_messages = db.session.query(func.count(AgentMessage.id)).scalar() or 0
+    messages_query = db.session.query(func.count(AgentMessage.id))
+    if org_id is not None:
+        messages_query = messages_query.join(
+            ConversationRun, AgentMessage.conversation_run_id == ConversationRun.id
+        ).filter(ConversationRun.organization_id == org_id)
+    total_messages = messages_query.scalar() or 0
 
     # Parallel branches: average size of a parallel group (nodes sharing one
     # non-null parallel_group), i.e. total grouped nodes / distinct groups.
-    grouped_nodes = (
+    grouped_nodes = _by_conversation(
         db.session.query(func.count(AgentNode.id))
         .filter(AgentNode.parallel_group.isnot(None))
-        .scalar()
-        or 0
-    )
-    distinct_groups = (
+    ).scalar() or 0
+    distinct_groups = _by_conversation(
         db.session.query(func.count(func.distinct(AgentNode.parallel_group)))
         .filter(AgentNode.parallel_group.isnot(None))
-        .scalar()
-        or 0
-    )
+    ).scalar() or 0
 
-    avg_latency = db.session.query(func.avg(ConversationRun.latency_ms)).scalar() or 0
-    total_cost = (
-        db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0)).scalar() or 0
-    )
+    avg_latency = _scoped(
+        db.session.query(func.avg(ConversationRun.latency_ms)),
+        ConversationRun.organization_id,
+    ).scalar() or 0
+    cost_query = db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0))
+    if org_id is not None:
+        cost_query = cost_query.join(
+            AgentRun, AgentStep.agent_run_id == AgentRun.id
+        ).filter(AgentRun.organization_id == org_id)
+    total_cost = cost_query.scalar() or 0
     success_workflows = (
-        db.session.query(func.count(ConversationRun.id))
+        _scoped(
+            db.session.query(func.count(ConversationRun.id)),
+            ConversationRun.organization_id,
+        )
         .filter(ConversationRun.status == AgentStatus.SUCCESS)
         .scalar()
         or 0

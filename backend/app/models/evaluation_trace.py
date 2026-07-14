@@ -80,6 +80,15 @@ class ReplayRun(db.Model):
 
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
+    # Tenant ownership (v1.0, phase 2). Denormalized from the original
+    # ConversationRun; nullable + SET NULL, mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # ConversationRun -> ReplayRuns. Backref added without touching the model.
     original_conversation_run = db.relationship(
         "ConversationRun",
@@ -184,6 +193,15 @@ class EvaluationRun(db.Model):
 
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
+    # Tenant ownership (v1.0, phase 2). Denormalized from the ConversationRun;
+    # nullable + SET NULL, mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # ConversationRun -> EvaluationRuns. Backref added without touching the model.
     conversation_run = db.relationship(
         "ConversationRun",
@@ -282,6 +300,15 @@ class ModelComparison(db.Model):
     comparison_metadata = db.Column("metadata", JSON, nullable=True)
 
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+
+    # Tenant ownership (v1.0, phase 2). Denormalized from the ConversationRun;
+    # nullable + SET NULL, mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # ConversationRun -> ModelComparisons. Backref added without touching model.
     conversation_run = db.relationship(

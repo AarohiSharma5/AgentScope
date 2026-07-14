@@ -74,6 +74,16 @@ class AgentRun(db.Model):
 
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
+    # Tenant ownership (v1.0, phase 2). Denormalized from the parent request
+    # Trace so agent-run lists/metrics can be filtered by org without joining;
+    # nullable + SET NULL mirrors traces.organization_id.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # RequestTrace (Trace) -> AgentRuns. Backref added without touching Trace.
     request = db.relationship(
         "Trace",
@@ -259,6 +269,15 @@ class RetrieverTrace(db.Model):
     embedding_time_ms = db.Column(db.Float, nullable=True)
     retrieval_time_ms = db.Column(db.Float, nullable=True)
     num_documents = db.Column(db.Integer, nullable=True)
+
+    # Tenant ownership (v1.0, phase 2). Denormalized from the owning AgentRun so
+    # RAG Observatory lists/metrics filter by org without a 3-table join.
+    organization_id = db.Column(
+        db.Integer,
+        db.ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     step = db.relationship("AgentStep", back_populates="retriever_traces")
 

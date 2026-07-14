@@ -73,6 +73,34 @@ def _tenant_scope() -> Optional[int]:
     return tenant_scope()
 
 
+def _scoped(query, column):
+    """Filter ``query`` to the caller's tenant on ``column`` (no-op when unscoped)."""
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(column == org_id)
+    return query
+
+
+def _org_of_trace(request_id: int) -> Optional[int]:
+    """Organization of a request trace, used to stamp its child agent runs.
+
+    Derived from the parent row (not the request context) so it is correct even
+    when a run is created on a worker thread that has no Flask request context
+    (e.g. parallel workflow branches).
+    """
+    trace = db.session.get(Trace, request_id)
+    return trace.organization_id if trace is not None else _current_org_id()
+
+
+def _org_of_step(step_id: int) -> Optional[int]:
+    """Organization of the agent run owning ``step_id`` (for stamping retrievals)."""
+    step = db.session.get(AgentStep, step_id)
+    if step is None:
+        return None
+    run = db.session.get(AgentRun, step.agent_run_id)
+    return run.organization_id if run is not None else None
+
+
 def create_trace(data: dict) -> Trace:
     """Create and persist a Trace from a payload dict."""
     input_tokens = data.get("input_tokens")
@@ -241,6 +269,7 @@ def create_agent_run(
         status=status,
         start_time=start_time or utcnow(),
         run_metadata=ensure_json_object(metadata, "metadata"),
+        organization_id=_org_of_trace(request_id),
     )
     db.session.add(run)
     db.session.commit()
@@ -429,6 +458,7 @@ def create_retriever_trace(
         embedding_time_ms=embedding_time_ms,
         retrieval_time_ms=retrieval_time_ms,
         num_documents=num_documents,
+        organization_id=_org_of_step(step_id),
     )
     db.session.add(retriever)
     db.session.commit()
@@ -514,7 +544,7 @@ def list_agent_runs(
     and pagination are all applied at the database level. Search matches the
     agent name, type, status and (numeric) run/request ids, case-insensitively.
     """
-    query = AgentRun.query
+    query = _scoped(AgentRun.query, AgentRun.organization_id)
     if status is not None:
         query = query.filter(AgentRun.status == status)
     if agent_type is not None:
@@ -538,33 +568,49 @@ def list_agent_runs(
 
 
 def get_agent_run(run_id: int) -> Optional[AgentRun]:
-    """Return a single agent run by id, or None."""
-    return db.session.get(AgentRun, run_id)
+    """Return a single agent run by id, or None (hidden when it belongs to another tenant)."""
+    run = db.session.get(AgentRun, run_id)
+    if run is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and run.organization_id != org_id:
+        return None
+    return run
 
 
 def list_agent_runs_for_request(request_id: int) -> list[AgentRun]:
-    """Return every agent run belonging to a request, most recent first."""
-    return (
-        AgentRun.query.filter(AgentRun.request_id == request_id)
-        .order_by(AgentRun.created_at.desc())
-        .all()
+    """Return every agent run belonging to a request, most recent first (tenant-scoped)."""
+    query = _scoped(
+        AgentRun.query.filter(AgentRun.request_id == request_id),
+        AgentRun.organization_id,
     )
+    return query.order_by(AgentRun.created_at.desc()).all()
+
+
+def get_agent_metrics() -> dict:
+    """Aggregate agent-run metrics for the dashboard (tenant-scoped when applicable)."""
+    return _agent_metrics_for_org(_tenant_scope())
 
 
 @cached()
-def get_agent_metrics() -> dict:
-    """Compute aggregate dashboard metrics across all agent runs.
+def _agent_metrics_for_org(organization_id: Optional[int] = None) -> dict:
+    """Compute aggregate dashboard metrics across agent runs for one org (or all).
 
     Run-level aggregates (count, latency, success) and step aggregates (count,
     cost) are each computed in a single query; the remaining child-table counts
-    are unavoidably separate tables. The whole result is cached for a few
-    seconds to absorb concurrent dashboard traffic.
+    are unavoidably separate tables. When ``organization_id`` is set, child-table
+    counts join up to the owning run so only that tenant's rows are counted. The
+    whole result is cached for a few seconds (keyed by org) to absorb concurrent
+    dashboard traffic.
     """
-    total_runs, avg_latency, success_runs = db.session.query(
+    run_query = db.session.query(
         func.count(AgentRun.id),
         func.avg(AgentRun.latency_ms),
         func.sum(case((AgentRun.status == AgentStatus.SUCCESS, 1), else_=0)),
-    ).one()
+    )
+    if organization_id is not None:
+        run_query = run_query.filter(AgentRun.organization_id == organization_id)
+    total_runs, avg_latency, success_runs = run_query.one()
 
     total_runs = total_runs or 0
     if total_runs == 0:
@@ -581,13 +627,35 @@ def get_agent_metrics() -> dict:
 
     avg_latency = avg_latency or 0
     success_runs = success_runs or 0
-    total_steps, total_cost = db.session.query(
+
+    step_query = db.session.query(
         func.count(AgentStep.id),
         func.coalesce(func.sum(AgentStep.cost), 0.0),
-    ).one()
-    total_memory = db.session.query(func.count(MemoryAccess.id)).scalar() or 0
-    total_tools = db.session.query(func.count(ToolExecution.id)).scalar() or 0
-    total_retrievals = db.session.query(func.count(RetrieverTrace.id)).scalar() or 0
+    )
+    memory_query = db.session.query(func.count(MemoryAccess.id))
+    tool_query = db.session.query(func.count(ToolExecution.id))
+    retrieval_query = db.session.query(func.count(RetrieverTrace.id))
+    if organization_id is not None:
+        step_query = step_query.join(
+            AgentRun, AgentStep.agent_run_id == AgentRun.id
+        ).filter(AgentRun.organization_id == organization_id)
+        memory_query = (
+            memory_query.join(AgentStep, MemoryAccess.step_id == AgentStep.id)
+            .join(AgentRun, AgentStep.agent_run_id == AgentRun.id)
+            .filter(AgentRun.organization_id == organization_id)
+        )
+        tool_query = (
+            tool_query.join(AgentStep, ToolExecution.step_id == AgentStep.id)
+            .join(AgentRun, AgentStep.agent_run_id == AgentRun.id)
+            .filter(AgentRun.organization_id == organization_id)
+        )
+        retrieval_query = retrieval_query.filter(
+            RetrieverTrace.organization_id == organization_id
+        )
+    total_steps, total_cost = step_query.one()
+    total_memory = memory_query.scalar() or 0
+    total_tools = tool_query.scalar() or 0
+    total_retrievals = retrieval_query.scalar() or 0
 
     return {
         "total_agent_runs": total_runs,
@@ -902,7 +970,10 @@ def list_retrievals(
     by ``embedding_model`` joins the embedding trace; ``min_documents`` filters on
     the retrieved document count. Sorting/pagination happen in the database.
     """
-    query = db.session.query(RetrieverTrace).options(*_retrieval_summary_loaders())
+    query = _scoped(
+        db.session.query(RetrieverTrace).options(*_retrieval_summary_loaders()),
+        RetrieverTrace.organization_id,
+    )
 
     if embedding_model is not None:
         query = query.join(
@@ -927,36 +998,66 @@ def list_retrievals(
 
 
 def get_retrieval(retrieval_id: int) -> Optional[RetrieverTrace]:
-    """Return a single retriever trace by id (with related data eager-loaded), or None."""
-    return (
+    """Return a single retriever trace by id (eager-loaded), or None (tenant-scoped)."""
+    retrieval = (
         db.session.query(RetrieverTrace)
         .options(*_retrieval_detail_loaders())
         .filter(RetrieverTrace.id == retrieval_id)
         .one_or_none()
     )
+    if retrieval is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None and retrieval.organization_id != org_id:
+        return None
+    return retrieval
 
 
 def get_prompt_assembly(prompt_id: int) -> Optional[PromptAssembly]:
-    """Return a single prompt assembly by id, or None."""
-    return db.session.get(PromptAssembly, prompt_id)
+    """Return a single prompt assembly by id, or None (hidden across tenants).
+
+    ``PromptAssembly`` has no denormalized org, so ownership is resolved through
+    its owning agent run.
+    """
+    assembly = db.session.get(PromptAssembly, prompt_id)
+    if assembly is None:
+        return None
+    org_id = _tenant_scope()
+    if org_id is not None:
+        run = db.session.get(AgentRun, assembly.agent_run_id)
+        if run is None or run.organization_id != org_id:
+            return None
+    return assembly
+
+
+def get_rag_metrics() -> dict:
+    """Aggregate RAG metrics for the dashboard (tenant-scoped when applicable)."""
+    return _rag_metrics_for_org(_tenant_scope())
 
 
 @cached()
-def get_rag_metrics() -> dict:
-    """Compute aggregate RAG metrics across all retrievals.
+def _rag_metrics_for_org(organization_id: Optional[int] = None) -> dict:
+    """Compute aggregate RAG metrics for one org (or all).
 
-    Aggregates over the same table are collapsed into one query each; the result
-    is cached for a few seconds to absorb concurrent dashboard traffic.
+    Aggregates over the same table are collapsed into one query each. When
+    ``organization_id`` is set, the retriever table filters on its own
+    denormalized org column and the document/embedding/prompt aggregates join up
+    to the owning retriever/run. Cached for a few seconds (keyed by org).
     """
     # Retriever-table aggregates in a single pass.
+    retriever_query = db.session.query(
+        func.count(RetrieverTrace.id),
+        func.avg(RetrieverTrace.num_documents),
+        func.avg(RetrieverTrace.retrieval_time_ms),
+        # "Success" = a retrieval that returned at least one document.
+        func.sum(case((RetrieverTrace.num_documents > 0, 1), else_=0)),
+    )
+    if organization_id is not None:
+        retriever_query = retriever_query.filter(
+            RetrieverTrace.organization_id == organization_id
+        )
     total_retrievals, avg_docs_retrieved, avg_retrieval_latency, successful = (
-        db.session.query(
-            func.count(RetrieverTrace.id),
-            func.avg(RetrieverTrace.num_documents),
-            func.avg(RetrieverTrace.retrieval_time_ms),
-            # "Success" = a retrieval that returned at least one document.
-            func.sum(case((RetrieverTrace.num_documents > 0, 1), else_=0)),
-        ).one()
+        retriever_query.one()
     )
 
     total_retrievals = total_retrievals or 0
@@ -977,21 +1078,35 @@ def get_rag_metrics() -> dict:
     avg_retrieval_latency = avg_retrieval_latency or 0
     successful = successful or 0
 
-    avg_similarity, selected_docs = db.session.query(
+    document_query = db.session.query(
         func.avg(RetrievedDocument.similarity_score),
         func.sum(case((RetrievedDocument.selected.is_(True), 1), else_=0)),
-    ).one()
+    )
+    embedding_query = db.session.query(
+        func.avg(EmbeddingTrace.latency_ms),
+        func.coalesce(func.sum(EmbeddingTrace.cost), 0.0),
+    )
+    prompt_query = db.session.query(func.avg(PromptAssembly.total_tokens))
+    if organization_id is not None:
+        document_query = document_query.join(
+            RetrieverTrace, RetrievedDocument.retriever_trace_id == RetrieverTrace.id
+        ).filter(RetrieverTrace.organization_id == organization_id)
+        embedding_query = embedding_query.join(
+            RetrieverTrace, EmbeddingTrace.retriever_trace_id == RetrieverTrace.id
+        ).filter(RetrieverTrace.organization_id == organization_id)
+        prompt_query = prompt_query.join(
+            AgentRun, PromptAssembly.agent_run_id == AgentRun.id
+        ).filter(AgentRun.organization_id == organization_id)
+
+    avg_similarity, selected_docs = document_query.one()
     avg_similarity = avg_similarity or 0
     selected_docs = selected_docs or 0
 
-    avg_embedding_latency, total_embedding_cost = db.session.query(
-        func.avg(EmbeddingTrace.latency_ms),
-        func.coalesce(func.sum(EmbeddingTrace.cost), 0.0),
-    ).one()
+    avg_embedding_latency, total_embedding_cost = embedding_query.one()
     avg_embedding_latency = avg_embedding_latency or 0
     total_embedding_cost = total_embedding_cost or 0
 
-    avg_prompt_size = db.session.query(func.avg(PromptAssembly.total_tokens)).scalar() or 0
+    avg_prompt_size = prompt_query.scalar() or 0
 
     return {
         "total_retrievals": total_retrievals,
