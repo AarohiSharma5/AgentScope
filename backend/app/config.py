@@ -12,6 +12,16 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 class Config:
     """Base configuration shared across environments."""
 
+    # Deployment environment. "production"/"prod" turns on hard security guards
+    # at boot (see the app factory): authentication must be enabled and secrets
+    # must be non-default, so an open/forgeable deployment can never ship by
+    # accident. Anything else (default "development") preserves the zero-config,
+    # auth-optional experience. ``FLASK_ENV`` is honored as a fallback.
+    ENVIRONMENT = (
+        os.getenv("AGENTSCOPE_ENV") or os.getenv("FLASK_ENV") or "development"
+    ).strip().lower()
+    IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 
     # Prefer PostgreSQL via DATABASE_URL; fall back to SQLite for zero-config dev.

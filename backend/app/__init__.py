@@ -58,20 +58,40 @@ _AUTH_EXEMPT_PATHS = frozenset(
 )
 
 
-def _verify_production_secrets(app: Flask) -> None:
-    """Fail fast if auth is enabled while default/placeholder secrets are in use."""
-    if not app.config.get("AUTH_ENABLED"):
-        return
-    weak = [
-        name
-        for name in ("SECRET_KEY", "JWT_SECRET")
-        if app.config.get(name) in _DEFAULT_SECRETS
-    ]
-    if weak:
+def _verify_security_posture(app: Flask) -> None:
+    """Fail fast on an unsafe security posture at boot.
+
+    In **production** (``AGENTSCOPE_ENV=production``) the app refuses to start
+    unless authentication is enabled *and* strong, non-default secrets are set —
+    so a fully open, forgeable-token deployment can never ship by accident. In
+    **development** the historical zero-config behavior is preserved: auth is
+    optional, but if it is turned on the same strong-secret requirement applies
+    (an on-but-forgeable configuration is never allowed).
+    """
+    is_production = app.config.get("IS_PRODUCTION")
+    auth_enabled = app.config.get("AUTH_ENABLED")
+
+    if is_production and not auth_enabled:
         raise RuntimeError(
-            "AUTH_ENABLED=true requires strong, non-default secrets; set a random "
-            f"value for: {', '.join(weak)}."
+            "AGENTSCOPE_ENV=production requires AUTH_ENABLED=true: refusing to "
+            "start with unauthenticated data routes. Enable auth (and set strong "
+            "SECRET_KEY / JWT_SECRET), or run with AGENTSCOPE_ENV=development."
         )
+
+    # Secrets must be strong whenever auth is in force: always in production,
+    # and in development only when AUTH_ENABLED was explicitly turned on.
+    if is_production or auth_enabled:
+        weak = [
+            name
+            for name in ("SECRET_KEY", "JWT_SECRET")
+            if app.config.get(name) in _DEFAULT_SECRETS
+        ]
+        if weak:
+            reason = "production" if is_production else "AUTH_ENABLED=true"
+            raise RuntimeError(
+                f"{reason} requires strong, non-default secrets; set a random "
+                f"value for: {', '.join(weak)}."
+            )
 
 
 def _register_auth_enforcement(app: Flask) -> None:
@@ -125,7 +145,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
 
     app = Flask(__name__)
     app.config.from_object(config_class)
-    _verify_production_secrets(app)
+    _verify_security_posture(app)
 
     db.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})

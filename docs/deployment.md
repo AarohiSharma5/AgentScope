@@ -92,6 +92,7 @@ isolation on the REST API).
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
+| `AGENTSCOPE_ENV` | `development` | Set to `production` to enforce a safe posture at boot (auth on + strong secrets, or the app refuses to start). |
 | `DATABASE_URL` | *(SQLite)* | PostgreSQL connection string. |
 | `USE_MIGRATIONS` | `false` | When `true`, skip `create_all()`; manage schema via `alembic upgrade head`. |
 | `SECRET_KEY` | `dev-secret-key` | **Set a strong value.** |
@@ -111,9 +112,14 @@ isolation on the REST API).
 
 ## Authentication & multi-tenancy
 
-Authentication is **opt-in and backward compatible**. The auth endpoints
-(`/api/auth/*`, `/api/organizations/*`) are always available; global enforcement
-on the data routes is off until you set `AUTH_ENABLED=true`.
+Authentication is **opt-in and backward compatible** in development. The auth
+endpoints (`/api/auth/*`, `/api/organizations/*`) are always available; global
+enforcement on the data routes is off until you set `AUTH_ENABLED=true`.
+
+**In production it is not optional.** Set `AGENTSCOPE_ENV=production` and the app
+**refuses to boot** unless `AUTH_ENABLED=true` and strong, non-default
+`SECRET_KEY` / `JWT_SECRET` are set — so an open or forgeable-token deployment
+can never ship by accident.
 
 Setup:
 
@@ -142,6 +148,7 @@ See the [REST API auth section](reference/rest-api.md#authentication--tenancy-v1
 
 ## Hardening checklist
 
+- [ ] `AGENTSCOPE_ENV=production` (enforces the two items below at boot).
 - [ ] Strong `SECRET_KEY` / `JWT_SECRET`; never commit secrets.
 - [ ] `AUTH_ENABLED=true` and TLS in front of the app.
 - [ ] Restrict `CORS_ORIGINS` to your real dashboard origin(s).

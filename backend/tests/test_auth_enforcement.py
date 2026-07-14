@@ -66,6 +66,51 @@ def test_boot_ok_with_strong_secrets_when_auth_enabled(tmp_path):
             db.drop_all()
 
 
+# -- Production environment guard (H1) --------------------------------------
+
+
+def test_production_refuses_to_boot_with_auth_disabled(tmp_path):
+    """Production must not ship with unauthenticated data routes."""
+    with pytest.raises(RuntimeError):
+        _make_app(tmp_path, IS_PRODUCTION=True)  # AUTH_ENABLED defaults to False
+
+
+def test_production_refuses_to_boot_with_default_secrets(tmp_path):
+    """Production with auth on but placeholder secrets is still rejected."""
+    with pytest.raises(RuntimeError):
+        _make_app(tmp_path, IS_PRODUCTION=True, AUTH_ENABLED=True)
+
+
+def test_production_boots_with_auth_and_strong_secrets(tmp_path):
+    app = _make_app(
+        tmp_path,
+        IS_PRODUCTION=True,
+        AUTH_ENABLED=True,
+        SECRET_KEY=_STRONG,
+        JWT_SECRET=_STRONG,
+    )
+    try:
+        assert app.config["IS_PRODUCTION"] is True
+        assert app.config["AUTH_ENABLED"] is True
+    finally:
+        with app.app_context():
+            db.session.remove()
+            db.drop_all()
+
+
+def test_development_stays_open_by_default(tmp_path):
+    """Dev default is unchanged: no env, auth off, default secrets -> boots open."""
+    app = _make_app(tmp_path)
+    try:
+        assert app.config["IS_PRODUCTION"] is False
+        assert app.config["AUTH_ENABLED"] is False
+        assert app.test_client().get("/api/traces").status_code == 200
+    finally:
+        with app.app_context():
+            db.session.remove()
+            db.drop_all()
+
+
 # -- Enforcement when enabled ----------------------------------------------
 
 
