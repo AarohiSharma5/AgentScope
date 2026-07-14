@@ -1,5 +1,5 @@
 Flask==3.0.3
-Flask-Cors==4.0.1
+Flask-Cors==6.0.5
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.51
 # Database schema migrations (production uses `alembic upgrade head`).
