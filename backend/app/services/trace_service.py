@@ -100,7 +100,10 @@ def create_trace(data: dict) -> Trace:
         final_response=data.get("final_response"),
         status=data.get("status", TraceStatus.SUCCESS),
         error_message=data.get("error_message"),
-        organization_id=data.get("organization_id") or _current_org_id(),
+        # Tenancy is derived solely from the authenticated identity, never the
+        # request body: accepting a client-supplied organization_id would let a
+        # caller forge ownership and write into (or read across) other tenants.
+        organization_id=_current_org_id(),
     )
     db.session.add(trace)
     db.session.commit()
