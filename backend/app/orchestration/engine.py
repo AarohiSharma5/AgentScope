@@ -256,6 +256,12 @@ class WorkflowEngine:
         self.default_handler = default_handler
         self.max_visits = max_visits
         self.max_steps = max_steps
+        # Per-instance monotonic counter for registry-unique agent names. It is
+        # instance-level (not a class attribute) so separate engines never share
+        # state, and lock-guarded so concurrent runs on a shared engine can't
+        # hand out the same number (a duplicate name would break AgentRegistry).
+        self._seq = 0
+        self._seq_lock = threading.Lock()
 
     # -- Definition persistence --------------------------------------------
 
@@ -541,9 +547,9 @@ class WorkflowEngine:
         if timeout_ms and (perf_counter() - started) * 1000 > timeout_ms:
             raise WorkflowTimeout()
 
-    _seq = 0
-
     def _agent_name(self, node_id: str) -> str:
         """Produce a registry-unique agent name (loops/retries reuse node ids)."""
-        self._seq += 1
-        return f"{node_id}#{self._seq}"
+        with self._seq_lock:
+            self._seq += 1
+            seq = self._seq
+        return f"{node_id}#{seq}"

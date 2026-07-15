@@ -460,3 +460,51 @@ def test_handler_can_cooperatively_cancel_via_context(app_ctx):
     # stops at the next node boundary.
     assert result.status == AgentStatus.CANCELLED
     assert result.visited == ["planner"]
+
+
+# -- Agent-name sequencing (H4) ---------------------------------------------
+
+
+def test_agent_name_counter_is_per_instance():
+    """Each engine has its own counter; state is not shared via a class attr."""
+    a = WorkflowEngine()
+    b = WorkflowEngine()
+
+    assert a._agent_name("planner") == "planner#1"
+    assert a._agent_name("planner") == "planner#2"
+    # A fresh engine starts at 1, unaffected by ``a``'s counter.
+    assert b._agent_name("planner") == "planner#1"
+
+
+def test_agent_name_is_unique_under_concurrency():
+    """Concurrent name generation on one engine never collides.
+
+    ``_agent_name`` is called for every node/branch/retry; the counter is
+    lock-guarded so parallel callers can't be handed the same number (a
+    duplicate name would break AgentRegistry.add).
+    """
+    import threading
+
+    engine = WorkflowEngine()
+    names: list[str] = []
+    names_lock = threading.Lock()
+    start = threading.Event()
+
+    def worker():
+        start.wait()
+        local = [engine._agent_name("node") for _ in range(200)]
+        with names_lock:
+            names.extend(local)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for t in threads:
+        t.start()
+    start.set()
+    for t in threads:
+        t.join()
+
+    # 16 threads x 200 calls, all distinct and contiguous 1..3200.
+    assert len(names) == 3200
+    assert len(set(names)) == 3200
+    seqs = sorted(int(n.split("#")[1]) for n in names)
+    assert seqs == list(range(1, 3201))
