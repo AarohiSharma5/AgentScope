@@ -11,7 +11,7 @@ from .context import (
     set_identity,
     tenant_scope,
 )
-from .decorators import optional_auth, require_auth, require_role
+from .decorators import optional_auth, require_admin, require_auth, require_role
 from .errors import (
     AuthError,
     AuthzError,
@@ -31,6 +31,7 @@ __all__ = [
     "require_auth",
     "optional_auth",
     "require_role",
+    "require_admin",
     "AuthError",
     "AuthzError",
     "RateLimitError",

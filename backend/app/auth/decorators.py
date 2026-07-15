@@ -9,9 +9,11 @@ decorators wire it into request handling and stash the identity on ``g``.
 """
 from functools import wraps
 
+from flask import current_app
+
 from .context import current_identity, resolve_identity, set_identity
-from .errors import AuthError
-from .roles import Role
+from .errors import AuthError, AuthzError
+from .roles import Role, role_satisfies
 
 
 def require_auth(view):
@@ -35,6 +37,42 @@ def optional_auth(view):
     def wrapper(*args, **kwargs):
         if current_identity() is None:
             set_identity(resolve_identity())
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def _is_admin(identity) -> bool:
+    """Whether ``identity`` is an org admin or a platform superadmin."""
+    return bool(getattr(identity, "is_superadmin", False)) or role_satisfies(
+        getattr(identity, "role", None) or Role.VIEWER, Role.ADMIN
+    )
+
+
+def require_admin(view):
+    """Require an administrative principal for an *instance-level* operation.
+
+    For privileged endpoints that are not scoped to a URL organization — plugin
+    lifecycle, background-job inspection, bundle import/export. The principal
+    must be a platform superadmin or hold the ``admin`` role in their active
+    organization.
+
+    Authorization only matters once authentication is enforced, so when
+    ``AUTH_ENABLED`` is off this is a no-op (preserving the zero-config,
+    single-user experience); production always runs with auth on (see the
+    boot-time security guard).
+    """
+
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not current_app.config.get("AUTH_ENABLED"):
+            return view(*args, **kwargs)
+        identity = current_identity() or resolve_identity()
+        if identity is None:
+            raise AuthError()
+        set_identity(identity)
+        if not _is_admin(identity):
+            raise AuthzError("this action requires an administrator role")
         return view(*args, **kwargs)
 
     return wrapper

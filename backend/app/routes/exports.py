@@ -13,8 +13,9 @@ Uploads read the raw request body; the format is auto-detected when not given.
 """
 import logging
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 
+from ..auth import rate_limited, require_admin
 from ..errors import error_response
 from ..exporting import (
     BundleError,
@@ -67,8 +68,13 @@ def export_kinds():
 
 
 @exports_bp.get("/export/analytics")
+@require_admin
 def export_analytics():
-    """Export the platform analytics snapshot (no entity id)."""
+    """Export the platform analytics snapshot (no entity id).
+
+    Metrics are computed via the tenant-scoped services, so an org-bound caller
+    only ever exports their own organization's aggregates.
+    """
     fmt = request.args.get("format", _DEFAULT_FORMAT)
     try:
         return _download(export_entity(BundleKind.ANALYTICS, None, fmt))
@@ -79,8 +85,13 @@ def export_analytics():
 
 
 @exports_bp.get("/export/<kind>/<int:entity_id>")
+@require_admin
 def export_kind(kind: str, entity_id: int):
-    """Export one entity of ``kind`` in the requested ``format``."""
+    """Export one entity of ``kind`` in the requested ``format``.
+
+    The collector looks the entity up through the tenant-scoped services, so an
+    entity owned by another organization is reported as not found (404).
+    """
     if kind not in BundleKind.ALL or kind == BundleKind.ANALYTICS:
         return error_response(
             "invalid export kind", 400, {"allowed": sorted(BundleKind.ALL - {BundleKind.ANALYTICS})}
@@ -97,16 +108,35 @@ def export_kind(kind: str, entity_id: int):
 # -- Import -----------------------------------------------------------------
 
 
-def _body_bytes() -> bytes:
-    return request.get_data() or b""
+def _read_upload() -> tuple[bytes, "Response | None"]:
+    """Read the request body for an import, enforcing the configured size cap.
+
+    Returns ``(data, None)`` on success or ``(b"", error_response)`` when the
+    body is empty or exceeds ``MAX_IMPORT_BYTES``. The ``Content-Length`` header
+    is checked first so an oversized upload is rejected without buffering it.
+    """
+    limit = current_app.config.get("MAX_IMPORT_BYTES") or 0
+    too_large = error_response(
+        f"import exceeds the maximum allowed size of {limit} bytes", 413
+    )
+    if limit and (request.content_length or 0) > limit:
+        return b"", too_large
+    data = request.get_data(cache=False) or b""
+    if not data:
+        return b"", error_response("request body is empty", 400)
+    if limit and len(data) > limit:
+        return b"", too_large
+    return data, None
 
 
 @exports_bp.post("/import")
+@require_admin
+@rate_limited()
 def import_bundle():
     """Reconstruct an uploaded bundle (conversation/workflow) into the database."""
-    data = _body_bytes()
-    if not data:
-        return error_response("request body is empty", 400)
+    data, err = _read_upload()
+    if err is not None:
+        return err
     try:
         return jsonify(import_data(data, request.args.get("format"))), 201
     except (ImporterError, BundleError) as exc:
@@ -114,11 +144,13 @@ def import_bundle():
 
 
 @exports_bp.post("/import/inspect")
+@require_admin
+@rate_limited()
 def import_inspect():
     """Parse and verify an uploaded bundle without writing anything."""
-    data = _body_bytes()
-    if not data:
-        return error_response("request body is empty", 400)
+    data, err = _read_upload()
+    if err is not None:
+        return err
     try:
         return jsonify(inspect_data(data, request.args.get("format")))
     except (ImporterError, BundleError) as exc:
@@ -126,11 +158,13 @@ def import_inspect():
 
 
 @exports_bp.post("/import/replay")
+@require_admin
+@rate_limited()
 def import_replay():
     """Import an exported conversation and replay it (optionally overriding params)."""
-    data = _body_bytes()
-    if not data:
-        return error_response("request body is empty", 400)
+    data, err = _read_upload()
+    if err is not None:
+        return err
 
     def _float(name):
         raw = request.args.get(name)

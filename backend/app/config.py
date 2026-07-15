@@ -76,6 +76,11 @@ class Config:
     # comparison, export) so they never tie up request-handling threads.
     BACKGROUND_WORKERS = int(os.getenv("BACKGROUND_WORKERS", "4"))
 
+    # Maximum size (bytes) of an uploaded import bundle. Import reconstructs
+    # arbitrary DB rows from the body, so cap it to bound memory/DoS. Default
+    # 25 MiB; set 0 to disable the check.
+    MAX_IMPORT_BYTES = int(os.getenv("MAX_IMPORT_BYTES", str(25 * 1024 * 1024)))
+
     CORS_ORIGINS = [
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")

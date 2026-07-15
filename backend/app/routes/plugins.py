@@ -15,6 +15,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
+from ..auth import require_admin
 from ..plugins import (
     ALL_CAPABILITIES,
     Capability,
@@ -79,6 +80,7 @@ def get_plugin(name: str):
 
 
 @plugins_bp.post("/plugins/<name>/enable")
+@require_admin
 def enable_plugin(name: str):
     try:
         record = plugin_manager.enable(name)
@@ -92,6 +94,7 @@ def enable_plugin(name: str):
 
 
 @plugins_bp.post("/plugins/<name>/disable")
+@require_admin
 def disable_plugin(name: str):
     # Cascade to dependents by default; ?cascade=false disables only this plugin.
     cascade = request.args.get("cascade", "true").lower() != "false"
@@ -103,6 +106,7 @@ def disable_plugin(name: str):
 
 
 @plugins_bp.post("/plugins/<name>/reload")
+@require_admin
 def reload_plugin(name: str):
     try:
         record = plugin_manager.reload(name)
@@ -114,6 +118,7 @@ def reload_plugin(name: str):
 
 
 @plugins_bp.delete("/plugins/<name>")
+@require_admin
 def uninstall_plugin(name: str):
     try:
         plugin_manager.uninstall(name)
