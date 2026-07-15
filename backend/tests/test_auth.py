@@ -141,6 +141,17 @@ def test_me_requires_auth(client):
     assert client.get("/api/auth/me", headers={"Authorization": "Bearer garbage"}).status_code == 401
 
 
+def test_access_token_query_param_fallback(client):
+    """EventSource/SSE can't send headers, so an access_token query param works."""
+    body = _register(client)
+    access = body["tokens"]["access_token"]
+    ok = client.get(f"/api/auth/me?access_token={access}")
+    assert ok.status_code == 200
+    assert ok.get_json()["user"]["email"] == "admin@acme.test"
+    # A bogus query token is still rejected.
+    assert client.get("/api/auth/me?access_token=garbage").status_code == 401
+
+
 # -- API: RBAC & organization isolation -------------------------------------
 
 

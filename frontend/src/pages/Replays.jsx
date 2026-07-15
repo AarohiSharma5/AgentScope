@@ -40,21 +40,22 @@ export default function Replays() {
   }, [search]);
 
   useEffect(() => {
-    let active = true;
+    const ctrl = new AbortController();
     setLoading(true);
     setError(null);
     api
-      .getReplays({ page, limit: LIMIT, sort, q: query })
+      .getReplays({ page, limit: LIMIT, sort, q: query }, { signal: ctrl.signal })
       .then((res) => {
-        if (!active) return;
         setReplays(res.data);
         setPagination(res.pagination);
       })
-      .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+      .catch((e) => {
+        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
   }, [page, sort, query, reloadKey]);
 
   async function replayAgain(replay) {

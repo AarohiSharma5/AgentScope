@@ -58,21 +58,22 @@ export default function Workflows() {
   }, [search]);
 
   useEffect(() => {
-    let active = true;
+    const ctrl = new AbortController();
     setLoading(true);
     setError(null);
     api
-      .getWorkflows({ page, limit: LIMIT, sort, q: query })
+      .getWorkflows({ page, limit: LIMIT, sort, q: query }, { signal: ctrl.signal })
       .then((res) => {
-        if (!active) return;
         setWorkflows(res.data);
         setPagination(res.pagination);
       })
-      .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+      .catch((e) => {
+        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
   }, [page, sort, query]);
 
   return (

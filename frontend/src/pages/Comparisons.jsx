@@ -112,21 +112,22 @@ export default function Comparisons() {
   }, [search]);
 
   useEffect(() => {
-    let active = true;
+    const ctrl = new AbortController();
     setLoading(true);
     setError(null);
     api
-      .getComparisons({ page, limit: LIMIT, q: query })
+      .getComparisons({ page, limit: LIMIT, q: query }, { signal: ctrl.signal })
       .then((res) => {
-        if (!active) return;
         setComparisons(res.data);
         setPagination(res.pagination);
       })
-      .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+      .catch((e) => {
+        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
   }, [page, query, reloadKey]);
 
   const refresh = () => {

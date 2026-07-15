@@ -39,21 +39,22 @@ export default function Conversations() {
   }, [search]);
 
   useEffect(() => {
-    let active = true;
+    const ctrl = new AbortController();
     setLoading(true);
     setError(null);
     api
-      .getConversations({ page, limit: LIMIT, sort, q: query, status })
+      .getConversations({ page, limit: LIMIT, sort, q: query, status }, { signal: ctrl.signal })
       .then((res) => {
-        if (!active) return;
         setConversations(res.data);
         setPagination(res.pagination);
       })
-      .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
+      .catch((e) => {
+        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
   }, [page, sort, query, status]);
 
   return (

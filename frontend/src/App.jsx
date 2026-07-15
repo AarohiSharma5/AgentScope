@@ -18,7 +18,9 @@ import Comparisons from "./pages/Comparisons.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Diffs from "./pages/Diffs.jsx";
 import Live from "./pages/Live.jsx";
+import Login from "./pages/Login.jsx";
 import EmptyState from "./components/ui/EmptyState.jsx";
+import { useAuth } from "./lib/AuthContext.jsx";
 
 function NotFound() {
   return (
@@ -56,7 +58,40 @@ function NavItem({ to, label, end }) {
   );
 }
 
+function SessionControls() {
+  const { status, user, authRequired, logout, requestLogin } = useAuth();
+  if (status === "authenticated") {
+    return (
+      <div className="flex items-center gap-3">
+        {user?.email && (
+          <span className="hidden text-sm text-gray-400 sm:inline">{user.email}</span>
+        )}
+        <button
+          onClick={logout}
+          className="rounded-md border border-ink-500 bg-ink-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-ink-600"
+        >
+          Sign out
+        </button>
+      </div>
+    );
+  }
+  // In open mode we don't nag; only offer sign-in once it's relevant.
+  if (authRequired) return null; // the gate is already shown
+  return (
+    <button
+      onClick={requestLogin}
+      className="text-sm text-gray-400 transition-colors hover:text-gray-200"
+    >
+      Sign in
+    </button>
+  );
+}
+
 export default function App() {
+  const { status, authRequired } = useAuth();
+  // Show the login gate when the backend requires auth and we have no session.
+  const showLoginGate = authRequired && status !== "authenticated";
+
   return (
     <div className="min-h-full">
       <header className="sticky top-0 z-10 border-b border-ink-500 bg-ink-800/80 backdrop-blur">
@@ -92,18 +127,24 @@ export default function App() {
               />
             </nav>
           </div>
-          <a
-            href="https://github.com/AarohiSharma5/AgentScope/tree/main/docs"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-gray-400 transition-colors hover:text-gray-200"
-          >
-            Docs
-          </a>
+          <div className="flex items-center gap-4">
+            <a
+              href="https://github.com/AarohiSharma5/AgentScope/tree/main/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-gray-400 transition-colors hover:text-gray-200"
+            >
+              Docs
+            </a>
+            <SessionControls />
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
+        {showLoginGate ? (
+          <Login />
+        ) : (
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/traces/:id" element={<TraceDetail />} />
@@ -126,6 +167,7 @@ export default function App() {
           <Route path="/live" element={<Live />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        )}
       </main>
     </div>
   );

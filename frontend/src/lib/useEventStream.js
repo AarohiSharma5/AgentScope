@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EVENT_TYPES } from "./liveEvents.js";
+import { getAccessToken } from "../api/authStore.js";
 
 // Generic Server-Sent Events subscription to the backend /api/stream endpoint.
 //
@@ -34,6 +35,10 @@ export function useEventStream({ topics = [], paused = false, onEvent }) {
     const params = new URLSearchParams();
     if (topicsKey) params.set("events", topicsKey);
     if (lastIdRef.current != null) params.set("last_event_id", lastIdRef.current);
+    // EventSource cannot set request headers, so when authenticated we pass the
+    // access token as a query param (the backend accepts it as a fallback).
+    const token = getAccessToken();
+    if (token) params.set("access_token", token);
     const query = params.toString();
     const source = new EventSource(`/api/stream${query ? `?${query}` : ""}`);
 
@@ -62,7 +67,8 @@ export function useEventStream({ topics = [], paused = false, onEvent }) {
 
     EVENT_TYPES.forEach((type) => source.addEventListener(type, handler));
     return () => source.close();
-  }, [topicsKey, paused]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicsKey, paused, getAccessToken()]);
 
   return { status, lastEventId };
 }

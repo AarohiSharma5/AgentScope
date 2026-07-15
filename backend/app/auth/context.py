@@ -111,7 +111,9 @@ def tenant_scope() -> Optional[int]:
 def resolve_identity() -> Optional[Identity]:
     """Resolve an :class:`Identity` from request credentials.
 
-    Supports ``Authorization: Bearer <jwt>`` and ``X-API-Key: <key>``. Returns
+    Supports ``Authorization: Bearer <jwt>`` and ``X-API-Key: <key>``. As a
+    fallback (for ``EventSource``/SSE, which cannot set request headers) an
+    ``access_token`` or ``api_key`` query parameter is also accepted. Returns
     ``None`` when no credentials are present, and raises :class:`AuthError` when
     credentials are present but invalid.
     """
@@ -122,6 +124,16 @@ def resolve_identity() -> Optional[Identity]:
     api_key = request.headers.get("X-API-Key")
     if api_key:
         return _identity_from_api_key(api_key.strip())
+
+    # Query-param fallback for header-less clients (SSE). Only used when no
+    # credential header was supplied.
+    query_token = request.args.get("access_token")
+    if query_token:
+        return _identity_from_jwt(query_token.strip())
+
+    query_key = request.args.get("api_key")
+    if query_key:
+        return _identity_from_api_key(query_key.strip())
 
     return None
 
