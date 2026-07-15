@@ -17,6 +17,19 @@ from .common import iso as _iso
 from .message import serialize_message, serialize_timeline_event
 
 
+def _related_count(obj, count_attr: str, relationship: str) -> int:
+    """Count of a relationship, preferring a prefetched value if the service set one.
+
+    List endpoints attach a cheap ``func.count()`` (e.g. ``execution_count``) so
+    the collection itself is never loaded just to call ``len()``. Detail
+    endpoints, which eager-load the collection, fall back to ``len()``.
+    """
+    prefetched = getattr(obj, count_attr, None)
+    if prefetched is not None:
+        return prefetched
+    return len(getattr(obj, relationship))
+
+
 # -- Workflows --------------------------------------------------------------
 
 
@@ -77,7 +90,7 @@ def serialize_workflow_summary(workflow: WorkflowDefinition) -> dict:
         "workflow_name": workflow.workflow_name,
         "version": workflow.version,
         "description": workflow.description,
-        "execution_count": len(workflow.executions),
+        "execution_count": _related_count(workflow, "execution_count", "executions"),
         "created_at": _iso(workflow.created_at),
         "updated_at": _iso(workflow.updated_at),
     }
@@ -183,8 +196,8 @@ def serialize_conversation_summary(conversation: ConversationRun) -> dict:
         "started_at": _iso(conversation.started_at),
         "finished_at": _iso(conversation.finished_at),
         "latency_ms": conversation.latency_ms,
-        "agent_count": len(conversation.nodes),
-        "message_count": len(conversation.messages),
+        "agent_count": _related_count(conversation, "agent_count", "nodes"),
+        "message_count": _related_count(conversation, "message_count", "messages"),
         "created_at": _iso(conversation.created_at),
     }
 

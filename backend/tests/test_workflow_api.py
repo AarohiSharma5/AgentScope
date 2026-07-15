@@ -110,6 +110,27 @@ def test_list_conversations_status_filter(client, seeded):
     assert client.get("/api/conversations?status=bogus").status_code == 400
 
 
+def test_list_conversation_counts_are_per_row(client, seeded, app):
+    """Counts come from grouped subqueries and map to the right row (H7).
+
+    A second conversation with a different shape must not inherit the first
+    conversation's agent/message counts.
+    """
+    with app.app_context():
+        orch = AgentOrchestrator(conversation_name="c2")
+        orch.create_agent("Solo", role="solo")  # 1 agent, no messages
+        orch.finish()
+        solo_id = orch.conversation.id
+
+    body = client.get("/api/conversations").get_json()
+    by_id = {row["id"]: row for row in body["data"]}
+
+    assert by_id[seeded["conversation_id"]]["agent_count"] == 2
+    assert by_id[seeded["conversation_id"]]["message_count"] == 3
+    assert by_id[solo_id]["agent_count"] == 1
+    assert by_id[solo_id]["message_count"] == 0
+
+
 def test_conversation_detail(client, seeded):
     resp = client.get(f"/api/conversations/{seeded['conversation_id']}")
     assert resp.status_code == 200

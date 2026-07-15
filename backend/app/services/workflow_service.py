@@ -317,11 +317,13 @@ def list_workflows(
     q: Optional[str] = None,
     sort: str = "-created_at",
 ) -> tuple[list[WorkflowDefinition], int]:
-    """Return a page of workflow definitions and the total matching count."""
-    query = _scoped(
-        WorkflowDefinition.query.options(selectinload(WorkflowDefinition.executions)),
-        WorkflowDefinition.organization_id,
-    )
+    """Return a page of workflow definitions and the total matching count.
+
+    The list only needs each workflow's execution *count*, so we avoid eager
+    loading the full execution history (which would pull every execution row per
+    workflow) and instead attach an index-backed ``func.count()`` per page.
+    """
+    query = _scoped(WorkflowDefinition.query, WorkflowDefinition.organization_id)
     if q:
         like = f"%{q}%"
         query = query.filter(
@@ -335,7 +337,29 @@ def list_workflows(
     total = query.count()
     query = apply_sort(query, sort, _WORKFLOW_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
+    _attach_execution_counts(items)
     return items, total
+
+
+def _attach_execution_counts(definitions: list[WorkflowDefinition]) -> None:
+    """Stamp ``execution_count`` on each definition via one grouped count query.
+
+    Lets the list serializer report the count without triggering a lazy load of
+    the (potentially large) executions collection per row.
+    """
+    ids = [d.id for d in definitions]
+    if not ids:
+        return
+    counts = dict(
+        db.session.query(
+            WorkflowExecution.workflow_definition_id, func.count(WorkflowExecution.id)
+        )
+        .filter(WorkflowExecution.workflow_definition_id.in_(ids))
+        .group_by(WorkflowExecution.workflow_definition_id)
+        .all()
+    )
+    for definition in definitions:
+        definition.execution_count = counts.get(definition.id, 0)
 
 
 def get_workflow(definition_id: int) -> Optional[WorkflowDefinition]:
@@ -361,11 +385,14 @@ def list_conversations(
     status: Optional[str] = None,
     sort: str = "-created_at",
 ) -> tuple[list[ConversationRun], int]:
-    """Return a page of conversation runs and the total matching count."""
-    query = ConversationRun.query.options(
-        selectinload(ConversationRun.nodes),
-        selectinload(ConversationRun.messages),
-    )
+    """Return a page of conversation runs and the total matching count.
+
+    The list only needs each conversation's agent/message *counts*, so we avoid
+    eager loading the full node tree and message bodies (whose size grows with
+    conversation content) and attach index-backed ``func.count()`` values per
+    page instead.
+    """
+    query = ConversationRun.query
     org_id = _tenant_scope()
     if org_id is not None:
         query = query.filter(ConversationRun.organization_id == org_id)
@@ -384,7 +411,34 @@ def list_conversations(
     total = query.count()
     query = apply_sort(query, sort, _CONVERSATION_SORT_COLUMNS)
     items = query.limit(limit).offset((page - 1) * limit).all()
+    _attach_conversation_counts(items)
     return items, total
+
+
+def _attach_conversation_counts(conversations: list[ConversationRun]) -> None:
+    """Stamp ``agent_count`` and ``message_count`` on each conversation.
+
+    Uses two grouped count queries per page (not per row) so the list serializer
+    never triggers a lazy load of the node tree / message bodies.
+    """
+    ids = [c.id for c in conversations]
+    if not ids:
+        return
+    node_counts = dict(
+        db.session.query(AgentNode.conversation_run_id, func.count(AgentNode.id))
+        .filter(AgentNode.conversation_run_id.in_(ids))
+        .group_by(AgentNode.conversation_run_id)
+        .all()
+    )
+    message_counts = dict(
+        db.session.query(AgentMessage.conversation_run_id, func.count(AgentMessage.id))
+        .filter(AgentMessage.conversation_run_id.in_(ids))
+        .group_by(AgentMessage.conversation_run_id)
+        .all()
+    )
+    for conversation in conversations:
+        conversation.agent_count = node_counts.get(conversation.id, 0)
+        conversation.message_count = message_counts.get(conversation.id, 0)
 
 
 def get_conversation(conversation_id: int) -> Optional[ConversationRun]:
