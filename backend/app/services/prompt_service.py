@@ -12,6 +12,7 @@ from typing import Optional
 from ..extensions import db
 from ..models.evaluation_trace import PromptVersion
 from ..utils.sorting import apply_sort, is_valid_sort
+from ..utils.unit_of_work import commit as _commit
 from ..utils.validation import ensure_json_object
 
 logger = logging.getLogger("agentscope")
@@ -54,7 +55,7 @@ def record_prompt_version(
         prompt_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(prompt_version)
-    db.session.commit()
+    _commit()
     logger.debug(
         "Recorded prompt version id=%s run_id=%s version=%s",
         prompt_version.id, agent_run_id, version,

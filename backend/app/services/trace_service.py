@@ -29,6 +29,7 @@ from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
 from ..utils.cache import cached
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
+from ..utils.unit_of_work import commit as _commit
 from ..utils.tokens import estimate_tokens
 from ..utils.validation import ensure_json_array, ensure_json_object
 
@@ -134,7 +135,7 @@ def create_trace(data: dict) -> Trace:
         organization_id=_current_org_id(),
     )
     db.session.add(trace)
-    db.session.commit()
+    _commit()
     logger.debug("Created trace id=%s model=%s", trace.id, trace.model_name)
     emit(
         EventType.TRACE_STARTED,
@@ -272,7 +273,7 @@ def create_agent_run(
         organization_id=_org_of_trace(request_id),
     )
     db.session.add(run)
-    db.session.commit()
+    _commit()
     logger.debug("Started agent run id=%s name=%s request_id=%s", run.id, agent_name, request_id)
     emit(
         EventType.AGENT_STARTED,
@@ -296,7 +297,7 @@ def finish_agent_run(
         run.latency_ms = latency_ms
     if metadata is not None:
         run.run_metadata = ensure_json_object(metadata, "metadata")
-    db.session.commit()
+    _commit()
     logger.debug("Finished agent run id=%s status=%s latency_ms=%s", run.id, status, run.latency_ms)
     emit(
         EventType.AGENT_FINISHED,
@@ -334,7 +335,7 @@ def create_agent_step(
         step_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(step)
-    db.session.commit()
+    _commit()
     emit(
         EventType.STEP_STARTED,
         step_id=step.id, agent_run_id=agent_run_id, step_type=step_type,
@@ -366,7 +367,7 @@ def finish_agent_step(
         step.latency_ms = latency_ms
     if metadata is not None:
         step.step_metadata = ensure_json_object(metadata, "metadata")
-    db.session.commit()
+    _commit()
     emit(
         EventType.STEP_FINISHED,
         step_id=step.id, agent_run_id=step.agent_run_id, step_type=step.step_type,
@@ -399,7 +400,7 @@ def create_tool_execution(
         error_message=error_message,
     )
     db.session.add(tool)
-    db.session.commit()
+    _commit()
     emit(
         EventType.TOOL_FINISHED,
         tool_id=tool.id, step_id=step_id, tool_name=tool_name,
@@ -429,7 +430,7 @@ def create_memory_access(
         latency_ms=latency_ms,
     )
     db.session.add(memory)
-    db.session.commit()
+    _commit()
     emit(
         EventType.MEMORY_FINISHED,
         memory_id=memory.id, step_id=step_id, memory_type=memory_type,
@@ -461,7 +462,7 @@ def create_retriever_trace(
         organization_id=_org_of_step(step_id),
     )
     db.session.add(retriever)
-    db.session.commit()
+    _commit()
     emit(
         EventType.RETRIEVER_FINISHED,
         retriever_id=retriever.id, step_id=step_id, num_documents=num_documents,
@@ -724,7 +725,7 @@ def create_embedding_trace(
         embedding_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(embedding)
-    db.session.commit()
+    _commit()
     logger.debug(
         "Recorded embedding id=%s trace_id=%s model=%s tokens=%s",
         embedding.id, retriever_trace_id, embedding_model, input_tokens,
@@ -756,7 +757,7 @@ def create_retrieved_document(
         doc_metadata=ensure_json_object(metadata, "metadata"),
     )
     db.session.add(document)
-    db.session.commit()
+    _commit()
     logger.debug(
         "Recorded retrieved document id=%s trace_id=%s selected=%s score=%s",
         document.id, retriever_trace_id, document.selected, document.similarity_score,
@@ -837,7 +838,7 @@ def create_prompt_assembly(
         total_tokens=total_tokens,
     )
     db.session.add(assembly)
-    db.session.commit()
+    _commit()
     logger.debug(
         "Recorded prompt assembly id=%s run_id=%s total_tokens=%s",
         assembly.id, agent_run_id, total_tokens,

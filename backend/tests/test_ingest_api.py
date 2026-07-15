@@ -128,6 +128,48 @@ def test_ingest_agent_run_validation(client):
     assert bad_tool.status_code == 400
 
 
+def test_ingest_agent_run_is_atomic_on_failure(client, app):
+    """A failure part-way through leaves nothing persisted (single transaction).
+
+    Guards H3: the whole nested payload is one transaction, so a validation
+    error in a later step rolls back the run, its earlier steps/tools and the
+    auto-created parent trace instead of leaving orphaned partial rows.
+    """
+    from app.models.agent_trace import AgentRun, AgentStep, ToolExecution
+    from app.models.trace import Trace
+
+    def _counts():
+        with app.app_context():
+            return (
+                Trace.query.count(),
+                AgentRun.query.count(),
+                AgentStep.query.count(),
+                ToolExecution.query.count(),
+            )
+
+    before = _counts()
+    payload = {
+        "agent_name": "Planner",
+        "model_name": "gpt-4o",  # no request_id -> a parent trace would be created
+        "steps": [
+            {
+                "step_type": "llm",
+                "name": "good-step",
+                "output": "fine",
+                "tool_calls": [{"tool_name": "search", "result": "ok"}],
+            },
+            # Second step's tool omits tool_name -> ValidationError mid-ingest.
+            {"step_type": "tool", "name": "bad-step", "tool_calls": [{"result": "no name"}]},
+        ],
+    }
+    resp = client.post("/api/agent-runs", json=payload)
+    assert resp.status_code == 400
+
+    # Nothing from the failed run (not even the first step's tool or the parent
+    # trace) was committed.
+    assert _counts() == before
+
+
 # -- POST /api/retrievals --------------------------------------------------
 
 

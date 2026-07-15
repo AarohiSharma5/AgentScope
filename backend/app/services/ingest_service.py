@@ -20,8 +20,10 @@ module is needed.
 import json
 from typing import Any, Optional
 
+from ..extensions import db
 from ..models.agent_trace import AgentStatus
 from ..utils.timeutils import utcnow
+from ..utils.unit_of_work import deferred_commits
 from ..utils.validation import ValidationError
 from . import trace_service
 
@@ -79,35 +81,46 @@ def ingest_agent_run(data: dict):
         if not isinstance(parent_run_id, int) or trace_service.get_agent_run(parent_run_id) is None:
             raise ValidationError("parent_run_id must reference an existing agent run")
 
-    request_id = _resolve_request_id(data)
+    # Persist the whole nested payload as ONE transaction: child creators flush
+    # (assigning ids) instead of committing, and we commit once at the end. This
+    # avoids a commit-per-row "transaction storm" (which exhausts the connection
+    # pool) and makes ingestion atomic — a failure part-way through rolls the
+    # entire run back rather than leaving orphaned partial rows.
+    try:
+        with deferred_commits():
+            request_id = _resolve_request_id(data)
+            run = trace_service.create_agent_run(
+                request_id=request_id,
+                agent_name=str(agent_name),
+                agent_type=data.get("agent_type"),
+                parent_run_id=parent_run_id,
+                status=AgentStatus.RUNNING,
+                start_time=utcnow(),
+                metadata=data.get("metadata"),
+            )
+            run_id = run.id
 
-    run = trace_service.create_agent_run(
-        request_id=request_id,
-        agent_name=str(agent_name),
-        agent_type=data.get("agent_type"),
-        parent_run_id=parent_run_id,
-        status=AgentStatus.RUNNING,
-        start_time=utcnow(),
-        metadata=data.get("metadata"),
-    )
+            for index, step_data in enumerate(steps, start=1):
+                _ingest_step(run_id, index, step_data)
 
-    for index, step_data in enumerate(steps, start=1):
-        _ingest_step(run.id, index, step_data)
+            prompt_assembly = data.get("prompt_assembly")
+            if isinstance(prompt_assembly, dict):
+                trace_service.create_prompt_assembly(
+                    run_id, **{k: prompt_assembly.get(k) for k in _PROMPT_ASSEMBLY_FIELDS}
+                )
 
-    prompt_assembly = data.get("prompt_assembly")
-    if isinstance(prompt_assembly, dict):
-        trace_service.create_prompt_assembly(
-            run.id, **{k: prompt_assembly.get(k) for k in _PROMPT_ASSEMBLY_FIELDS}
-        )
-
-    trace_service.finish_agent_run(
-        run,
-        status=data.get("status", AgentStatus.SUCCESS),
-        latency_ms=_as_number(data.get("latency_ms"), "latency_ms"),
-    )
+            trace_service.finish_agent_run(
+                run,
+                status=data.get("status", AgentStatus.SUCCESS),
+                latency_ms=_as_number(data.get("latency_ms"), "latency_ms"),
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
     # Re-fetch with the detail eager-loaders so serialization avoids N+1 queries.
-    return trace_service.get_agent_run(run.id)
+    return trace_service.get_agent_run(run_id)
 
 
 def ingest_retrieval(data: dict):
@@ -121,34 +134,44 @@ def ingest_retrieval(data: dict):
     if not isinstance(data, dict):
         raise ValidationError("request body must be a JSON object")
 
-    request_id = _resolve_request_id(data)
+    # One atomic transaction for the run + step + retrieval + documents (see
+    # ingest_agent_run for why: no per-row commit storm, all-or-nothing).
+    try:
+        with deferred_commits():
+            request_id = _resolve_request_id(data)
+            run = trace_service.create_agent_run(
+                request_id=request_id,
+                agent_name=data.get("agent_name") or "Retriever",
+                agent_type=data.get("agent_type") or "retriever",
+                status=AgentStatus.RUNNING,
+                start_time=utcnow(),
+                metadata=data.get("metadata"),
+            )
+            step = trace_service.create_agent_step(
+                agent_run_id=run.id,
+                step_number=1,
+                step_type="retrieval",
+                name="Retriever",
+                input=data.get("query"),
+                status=AgentStatus.RUNNING,
+                started_at=utcnow(),
+            )
 
-    run = trace_service.create_agent_run(
-        request_id=request_id,
-        agent_name=data.get("agent_name") or "Retriever",
-        agent_type=data.get("agent_type") or "retriever",
-        status=AgentStatus.RUNNING,
-        start_time=utcnow(),
-        metadata=data.get("metadata"),
-    )
-    step = trace_service.create_agent_step(
-        agent_run_id=run.id,
-        step_number=1,
-        step_type="retrieval",
-        name="Retriever",
-        input=data.get("query"),
-        status=AgentStatus.RUNNING,
-        started_at=utcnow(),
-    )
+            retriever = _ingest_retrieval_into_step(step.id, data)
+            retriever_id = retriever.id
 
-    retriever = _ingest_retrieval_into_step(step.id, data)
+            trace_service.finish_agent_step(
+                step,
+                status=AgentStatus.SUCCESS,
+                latency_ms=_as_number(data.get("retrieval_time_ms"), "retrieval_time_ms"),
+            )
+            trace_service.finish_agent_run(run, status=AgentStatus.SUCCESS)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
-    trace_service.finish_agent_step(
-        step, status=AgentStatus.SUCCESS, latency_ms=_as_number(data.get("retrieval_time_ms"), "retrieval_time_ms")
-    )
-    trace_service.finish_agent_run(run, status=AgentStatus.SUCCESS)
-
-    return trace_service.get_retrieval(retriever.id)
+    return trace_service.get_retrieval(retriever_id)
 
 
 # -- internals -------------------------------------------------------------
