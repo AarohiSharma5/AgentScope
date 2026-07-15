@@ -124,6 +124,51 @@ def test_parallel_execution_propagates_first_error(app_ctx):
     orchestrator.finish(status=AgentStatus.FAILED)
 
 
+def test_parallel_execution_caps_concurrency(app_ctx):
+    """A wide fan-out never runs more branches at once than the config cap (H5).
+
+    Guards against the unbounded ``max_workers=len(branches)`` that could spawn a
+    thread + DB connection per branch and exhaust the pool. Extra branches queue
+    and run as slots free up, so all still complete.
+    """
+    import threading
+    import time
+
+    from flask import current_app
+
+    current_app.config["WORKFLOW_MAX_PARALLELISM"] = 3
+
+    orchestrator = AgentOrchestrator()
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    def make_work():
+        def work():
+            with lock:
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+            time.sleep(0.02)  # hold the slot so overlap is observable
+            with lock:
+                state["active"] -= 1
+            return "ok"
+
+        return work
+
+    tasks = [
+        (orchestrator.create_agent(name=f"W{i}", role="worker"), make_work())
+        for i in range(12)
+    ]
+
+    results = orchestrator.run_parallel(tasks)
+
+    # All 12 branches ran and produced their result...
+    assert len(results) == 12
+    assert all(v == "ok" for v in results.values())
+    # ...but never more than the cap of 3 were in flight simultaneously.
+    assert 1 <= state["peak"] <= 3
+    orchestrator.finish()
+
+
 def test_shared_context_is_the_same_across_agents(app_ctx):
     orchestrator = AgentOrchestrator(context={"topic": "LangSmith"})
     a = orchestrator.create_agent(name="A")

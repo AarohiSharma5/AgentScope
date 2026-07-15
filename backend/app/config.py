@@ -76,6 +76,15 @@ class Config:
     # comparison, export) so they never tie up request-handling threads.
     BACKGROUND_WORKERS = int(os.getenv("BACKGROUND_WORKERS", "4"))
 
+    # Max branches of a workflow "parallel" node that run at once, per fan-out.
+    # Extra branches queue and start as slots free up, so a wide parallel node
+    # never spawns a thread-and-DB-connection per branch. Each concurrent branch
+    # re-enters the app context and a handler that touches the ORM may hold one
+    # pooled connection, so keep this comfortably below DB_POOL_SIZE +
+    # DB_MAX_OVERFLOW; the real connection budget is this value multiplied by the
+    # number of workflows running concurrently.
+    WORKFLOW_MAX_PARALLELISM = int(os.getenv("WORKFLOW_MAX_PARALLELISM", "8"))
+
     # Maximum size (bytes) of an uploaded import bundle. Import reconstructs
     # arbitrary DB rows from the body, so cap it to bound memory/DoS. Default
     # 25 MiB; set 0 to disable the check.

@@ -186,7 +186,12 @@ class AgentOrchestrator:
             with app.app_context():
                 return agent._run_timed(work)
 
-        with ThreadPoolExecutor(max_workers=len(normalized)) as executor:
+        # Cap concurrency so a wide fan-out (or many concurrent workflows) can't
+        # spawn a thread + DB connection per branch and exhaust the pool. Extra
+        # branches queue in the executor and run as slots free up; result order
+        # is preserved by ``map``, so the ``zip`` below stays correct.
+        max_workers = self._parallel_worker_cap(len(normalized))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             outcomes = list(executor.map(_invoke, normalized))
 
         # 3. Finish every run (sequential DB writes) with its measured latency.
@@ -235,6 +240,25 @@ class AgentOrchestrator:
         return self.conversation
 
     # -- Internal counters --------------------------------------------------
+
+    # Fallback cap used when running outside a Flask app context (e.g. bare SDK
+    # usage in a script), where ``current_app.config`` is unavailable.
+    _DEFAULT_MAX_PARALLELISM = 8
+
+    def _parallel_worker_cap(self, branch_count: int) -> int:
+        """Number of threads to use for a fan-out: ``min(branches, config cap)``.
+
+        Bounding this is what prevents a parallel node with many branches (or
+        several workflows fanning out at once) from opening a thread and pooled
+        DB connection per branch and exhausting the connection pool / starving
+        the request-serving worker.
+        """
+        cap = self._DEFAULT_MAX_PARALLELISM
+        if has_app_context():
+            configured = current_app.config.get("WORKFLOW_MAX_PARALLELISM")
+            if configured:
+                cap = int(configured)
+        return max(1, min(branch_count, cap))
 
     def _next_order(self) -> int:
         order = self._order

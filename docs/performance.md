@@ -40,6 +40,7 @@ Tunable via environment variables (defaults shown):
 | `DB_MAX_OVERFLOW` | `20` | Extra connections allowed under burst |
 | `DB_POOL_TIMEOUT` | `30` | Seconds to wait for a free connection |
 | `DB_POOL_RECYCLE` | `1800` | Recycle connections after 30 min (avoids stale server-side timeouts) |
+| `WORKFLOW_MAX_PARALLELISM` | `8` | Max branches of one workflow `parallel` node run at once (see below) |
 
 `pool_pre_ping=True` transparently discards dead connections, and
 `pool_use_lifo=True` keeps a small set of hot connections warm while letting idle
@@ -131,6 +132,24 @@ Each job runs inside a fresh Flask app context (full ORM access) with the sessio
 cleaned up afterwards. Concurrency is capped by `BACKGROUND_WORKERS` (default
 `4`), so a flood of jobs queues gracefully instead of exhausting threads and
 database connections. Inspect jobs via `GET /api/jobs` and `GET /api/jobs/<id>`.
+
+## Workflow parallel fan-out
+
+A workflow `parallel` node runs its branches concurrently, each on its own
+thread that re-enters the Flask app context. Any branch handler that touches the
+ORM therefore borrows one connection from the pool for the duration of its work.
+
+`WORKFLOW_MAX_PARALLELISM` (default `8`) caps how many branches of a single
+fan-out run at once; extra branches queue and start as slots free up, so a node
+with 50 branches still only ever uses 8 threads/connections at a time — instead
+of trying to open 50 at once and exhausting the pool.
+
+**Budget the connections.** The worst-case in-flight branch connections are
+`WORKFLOW_MAX_PARALLELISM × (number of workflows running concurrently)`. Keep
+that comfortably under `DB_POOL_SIZE + DB_MAX_OVERFLOW` and leave headroom for
+ordinary API/SSE traffic. If branch handlers are DB-heavy, either lower
+`WORKFLOW_MAX_PARALLELISM` or raise the pool size (and Postgres
+`max_connections`) to match.
 
 ## Streaming efficiency
 
