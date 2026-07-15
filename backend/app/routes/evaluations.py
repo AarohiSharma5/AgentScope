@@ -449,5 +449,20 @@ def evaluation_metrics():
 
 @evaluations_bp.get("/dashboard/evaluation-analytics")
 def evaluation_analytics():
-    """Return daily time-series analytics + headline rates for the dashboard."""
-    return jsonify(evaluation_service.get_evaluation_analytics())
+    """Return daily time-series analytics + headline rates for the dashboard.
+
+    The series is bounded to the last ``?days=N`` days (default 90, capped at
+    365) so a growing history can't turn one dashboard load into an unbounded
+    scan. Pass ``days=0`` for all history.
+    """
+    try:
+        days = _int_arg("days")
+    except ValueError:
+        return error_response("days must be an integer", 400)
+    if days is None:
+        days = 90
+    elif days <= 0:
+        days = None  # all history
+    else:
+        days = min(days, 365)
+    return jsonify(evaluation_service.get_evaluation_analytics(days=days))

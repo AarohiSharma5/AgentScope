@@ -200,6 +200,52 @@ def test_evaluation_analytics_dashboard(client, conversation):
     assert data["totals"]["failure_rate"] == 0.0
 
 
+def test_evaluation_analytics_aggregation_and_date_bounds(app_ctx):
+    """Daily aggregation is correct and ``days`` bounds the window (H6).
+
+    Verifies the set-based aggregation (no per-run fan-out) reproduces the old
+    per-run cost/token/failure bucketing and that the date bound trims old days.
+    """
+    from datetime import timedelta
+
+    from app.extensions import db
+    from app.models.agent_trace import AgentStatus
+    from app.services import evaluation_service as es
+    from app.utils.timeutils import utcnow
+
+    conv_id = _build_conversation()  # one step: cost 0.01, tokens 150
+
+    # Two evaluations of the SAME conversation, on two different days.
+    r_today = es.create_evaluation_run(conv_id, evaluation_type="quality")
+    es.finish_evaluation_run(r_today, overall_score=0.8, status=AgentStatus.SUCCESS)
+
+    r_old = es.create_evaluation_run(conv_id, evaluation_type="quality")
+    es.finish_evaluation_run(r_old, overall_score=0.6, status=AgentStatus.FAILED)
+    r_old.created_at = utcnow() - timedelta(days=10)
+    db.session.commit()
+
+    # All history -> two daily buckets, each reflecting the conversation's step
+    # cost/tokens (counted per evaluation run, as before).
+    everything = es.get_evaluation_analytics(days=None)
+    assert len(everything["daily"]) == 2
+    for bucket in everything["daily"]:
+        assert bucket["cost"] == 0.01
+        assert bucket["tokens"] == 150
+    oldest = min(everything["daily"], key=lambda b: b["date"])
+    assert oldest["failures"] == 1
+    assert oldest["failure_rate"] == 1.0
+
+    # Cost is averaged over DISTINCT conversations (both evals share one).
+    metrics = es.get_evaluation_metrics()
+    assert metrics["total_evaluations"] == 2
+    assert metrics["average_cost"] == 0.01
+
+    # Bounded to the last 3 days -> only the recent bucket survives.
+    recent = es.get_evaluation_analytics(days=3)
+    assert len(recent["daily"]) == 1
+    assert recent["daily"][0]["evaluations"] == 1
+
+
 # -- Cross-cutting ----------------------------------------------------------
 
 

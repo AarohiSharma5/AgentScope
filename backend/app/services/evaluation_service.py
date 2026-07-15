@@ -8,18 +8,18 @@ evaluators score, reusing the replay snapshot so there is no duplicated
 trace-reconstruction logic.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import selectinload
 
 from ..evaluation.context import EvaluationContext, MetricResult
 from ..evaluation.evaluators import Metrics
 from ..extensions import db
-from ..models.agent_trace import AgentStatus
+from ..models.agent_trace import AgentStatus, AgentStep
 from ..models.evaluation_trace import EvaluationMetric, EvaluationRun
-from ..models.workflow_trace import ConversationRun
+from ..models.workflow_trace import AgentNode, ConversationRun
 from ..services import replay_service
 from ..streaming import EventType, emit
 from ..utils.sorting import apply_sort, is_valid_sort
@@ -50,6 +50,20 @@ def _org_of_conversation(conversation_run_id: Optional[int]) -> Optional[int]:
         return None
     conversation = db.session.get(ConversationRun, conversation_run_id)
     return conversation.organization_id if conversation is not None else None
+
+
+def _day_expr(column):
+    """Portable ``YYYY-MM-DD`` day bucket for the active database dialect.
+
+    Day bucketing is done in SQL (via ``GROUP BY``) rather than by pulling every
+    row into Python, so the only dialect-specific bit — the date-truncation
+    function — is isolated here. SQLite uses ``strftime``; everything else
+    (PostgreSQL) uses ``to_char``. Both yield the same string shape as
+    ``datetime.date().isoformat()``.
+    """
+    if db.session.get_bind().dialect.name == "sqlite":
+        return func.strftime("%Y-%m-%d", column)
+    return func.to_char(column, "YYYY-MM-DD")
 
 
 # -- EvaluationRun ----------------------------------------------------------
@@ -252,29 +266,42 @@ def get_evaluation_metrics() -> dict:
     metric_rows = metric_query.group_by(EvaluationMetric.metric_name).all()
     by_metric = {name: _round(value, 4) for name, value in metric_rows}
 
-    conversation_ids = [
-        row[0]
-        for row in _scoped(
-            db.session.query(EvaluationRun.conversation_run_id),
-            EvaluationRun.organization_id,
+    # Cost and latency are aggregated over the *distinct evaluated
+    # conversations* with a few set-based queries instead of looping
+    # ``conversation_totals`` per conversation (which was N x ~3 queries and
+    # grew linearly with history). ``conv_ids`` is reused as an ``IN`` subquery.
+    conv_ids = _scoped(
+        db.session.query(EvaluationRun.conversation_run_id),
+        EvaluationRun.organization_id,
+    ).distinct()
+    num_conversations = conv_ids.count()
+
+    # Mean per-conversation cost == total step cost / number of conversations
+    # (conversations with no steps contribute 0, matching the old behavior).
+    total_cost = (
+        db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0))
+        .select_from(AgentNode)
+        .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id)
+        .filter(AgentNode.conversation_run_id.in_(conv_ids))
+        .scalar()
+    ) or 0.0
+    average_cost = round(total_cost / num_conversations, 6) if num_conversations else None
+
+    avg_latency = (
+        db.session.query(func.avg(ConversationRun.latency_ms))
+        .filter(
+            ConversationRun.id.in_(conv_ids),
+            ConversationRun.latency_ms.isnot(None),
         )
-        .distinct()
-        .all()
-    ]
-    costs: list[float] = []
-    latencies: list[float] = []
-    for conversation_id in conversation_ids:
-        totals = replay_service.conversation_totals(conversation_id)
-        if totals.get("cost") is not None:
-            costs.append(totals["cost"])
-        if totals.get("latency_ms") is not None:
-            latencies.append(totals["latency_ms"])
+        .scalar()
+    )
+    average_latency = round(avg_latency, 4) if avg_latency is not None else None
 
     return {
         "total_evaluations": total,
         "average_evaluation_score": _round(avg_score, 4),
-        "average_cost": _mean(costs, 6),
-        "average_latency": _mean(latencies, 4),
+        "average_cost": average_cost,
+        "average_latency": average_latency,
         "average_correctness": by_metric.get(Metrics.CORRECTNESS),
         "average_faithfulness": by_metric.get(Metrics.FAITHFULNESS),
         "average_groundedness": by_metric.get(Metrics.GROUNDEDNESS),
@@ -284,53 +311,89 @@ def get_evaluation_metrics() -> dict:
     }
 
 
-def get_evaluation_analytics() -> dict:
+def get_evaluation_analytics(days: Optional[int] = None) -> dict:
     """Build daily time-series analytics plus headline rates for the dashboard.
 
     Each evaluation run is bucketed by its creation date; per-day cost, tokens
-    and latency come from the evaluated conversations (reusing
-    ``conversation_totals``), alongside the average evaluation score and the
-    failure rate. The headline block reuses :func:`get_evaluation_metrics`.
+    and latency come from the evaluated conversations, alongside the average
+    evaluation score and the failure rate. The headline block reuses
+    :func:`get_evaluation_metrics`.
+
+    Aggregation is done with a fixed handful of set-based queries (``GROUP BY``
+    in SQL, plus one join to sum cost/tokens), independent of how many
+    evaluation runs exist — instead of loading every run and issuing ~3 queries
+    per run. ``days`` optionally bounds the series to the last N days (``None``
+    = all history); the dashboard route passes a sensible default so a growing
+    history can never turn one dashboard load into an unbounded scan.
     """
-    runs = (
-        _scoped(EvaluationRun.query, EvaluationRun.organization_id)
-        .order_by(EvaluationRun.created_at.asc())
-        .all()
+    since = utcnow() - timedelta(days=days) if days and days > 0 else None
+    day = _day_expr(EvaluationRun.created_at)
+
+    # 1) Run-level per-day aggregates: count, failures and mean score. One query.
+    run_q = _scoped(
+        db.session.query(
+            day.label("day"),
+            func.count(EvaluationRun.id),
+            func.sum(case((EvaluationRun.status == AgentStatus.FAILED, 1), else_=0)),
+            func.avg(EvaluationRun.overall_score),
+        ),
+        EvaluationRun.organization_id,
     )
+    if since is not None:
+        run_q = run_q.filter(EvaluationRun.created_at >= since)
+    run_rows = run_q.group_by(day).all()
 
-    buckets: dict[str, dict] = {}
-    for run in runs:
-        day = (run.created_at.date().isoformat() if run.created_at else "unknown")
-        bucket = buckets.setdefault(
-            day,
-            {"cost": 0.0, "tokens": 0, "latency_sum": 0.0, "latency_n": 0,
-             "scores": [], "evaluations": 0, "failures": 0},
+    # 2) Per-day mean conversation latency. One query (AVG ignores NULLs).
+    lat_q = _scoped(
+        db.session.query(day.label("day"), func.avg(ConversationRun.latency_ms))
+        .select_from(EvaluationRun)
+        .join(ConversationRun, EvaluationRun.conversation_run_id == ConversationRun.id),
+        EvaluationRun.organization_id,
+    )
+    if since is not None:
+        lat_q = lat_q.filter(EvaluationRun.created_at >= since)
+    latency_by_day = dict(lat_q.group_by(day).all())
+
+    # 3) Cost + tokens per day. Tokens live in a JSON column (not portably
+    #    SUM-able in SQL), so we pull the (day, cost, token_usage) rows for the
+    #    evaluated conversations' steps in ONE date-bounded query and fold them
+    #    in Python — no per-conversation fan-out.
+    ct_q = _scoped(
+        db.session.query(day.label("day"), AgentStep.cost, AgentStep.token_usage)
+        .select_from(EvaluationRun)
+        .join(AgentNode, AgentNode.conversation_run_id == EvaluationRun.conversation_run_id)
+        .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id),
+        EvaluationRun.organization_id,
+    )
+    if since is not None:
+        ct_q = ct_q.filter(EvaluationRun.created_at >= since)
+
+    cost_by_day: dict[str, float] = {}
+    tokens_by_day: dict[str, int] = {}
+    for bucket_day, cost, usage in ct_q.all():
+        cost_by_day[bucket_day] = cost_by_day.get(bucket_day, 0.0) + (cost or 0.0)
+        usage = usage or {}
+        tokens = usage.get("total") or ((usage.get("input") or 0) + (usage.get("output") or 0))
+        tokens_by_day[bucket_day] = tokens_by_day.get(bucket_day, 0) + tokens
+
+    daily = []
+    for bucket_day, evaluations, failures, avg_eval_score in sorted(
+        run_rows, key=lambda r: r[0] or ""
+    ):
+        failures = failures or 0
+        latency = latency_by_day.get(bucket_day)
+        daily.append(
+            {
+                "date": bucket_day,
+                "cost": round(cost_by_day.get(bucket_day, 0.0), 6),
+                "tokens": tokens_by_day.get(bucket_day, 0),
+                "latency_ms": round(latency, 2) if latency is not None else None,
+                "evaluation_score": round(avg_eval_score, 4) if avg_eval_score is not None else None,
+                "evaluations": evaluations,
+                "failures": failures,
+                "failure_rate": round(failures / evaluations, 4) if evaluations else 0.0,
+            }
         )
-        totals = replay_service.conversation_totals(run.conversation_run_id)
-        bucket["cost"] += totals.get("cost") or 0.0
-        bucket["tokens"] += totals.get("total_tokens") or 0
-        if totals.get("latency_ms") is not None:
-            bucket["latency_sum"] += totals["latency_ms"]
-            bucket["latency_n"] += 1
-        if run.overall_score is not None:
-            bucket["scores"].append(run.overall_score)
-        bucket["evaluations"] += 1
-        if run.status == AgentStatus.FAILED:
-            bucket["failures"] += 1
-
-    daily = [
-        {
-            "date": day,
-            "cost": round(b["cost"], 6),
-            "tokens": b["tokens"],
-            "latency_ms": round(b["latency_sum"] / b["latency_n"], 2) if b["latency_n"] else None,
-            "evaluation_score": _mean(b["scores"], 4),
-            "evaluations": b["evaluations"],
-            "failures": b["failures"],
-            "failure_rate": round(b["failures"] / b["evaluations"], 4) if b["evaluations"] else 0.0,
-        }
-        for day, b in sorted(buckets.items())
-    ]
 
     headline = get_evaluation_metrics()
     headline["failure_rate"] = round(1 - headline["success_rate"], 4)
@@ -340,11 +403,6 @@ def get_evaluation_analytics() -> dict:
 def _round(value: Optional[float], places: int) -> Optional[float]:
     """Round an optional number to ``places`` decimals, preserving None."""
     return round(value, places) if value is not None else None
-
-
-def _mean(values: list[float], places: int) -> Optional[float]:
-    """Mean of a list, rounded, or None when empty."""
-    return round(sum(values) / len(values), places) if values else None
 
 
 # -- Evaluation context -----------------------------------------------------
