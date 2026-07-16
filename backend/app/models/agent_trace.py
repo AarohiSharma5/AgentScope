@@ -29,6 +29,11 @@ class AgentStatus:
     CANCELLED = "cancelled"
     TIMEOUT = "timeout"
 
+    #: The single source of truth for every valid status value. Both ingestion
+    #: validation and the list-filter validation reference this so the two can
+    #: never drift apart (e.g. accepting a status on write that can't be filtered).
+    ALL = frozenset({PENDING, RUNNING, SUCCESS, FAILED, CANCELLED, TIMEOUT})
+
 
 class AgentRun(db.Model):
     """A single agent invocation, optionally nested under a parent run.

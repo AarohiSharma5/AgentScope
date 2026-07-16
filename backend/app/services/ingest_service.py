@@ -27,16 +27,6 @@ from ..utils.unit_of_work import deferred_commits
 from ..utils.validation import ValidationError
 from . import trace_service
 
-# All status values accepted on ingested runs/steps/tools.
-_ALLOWED_STATUS = {
-    AgentStatus.PENDING,
-    AgentStatus.RUNNING,
-    AgentStatus.SUCCESS,
-    AgentStatus.FAILED,
-    AgentStatus.CANCELLED,
-    AgentStatus.TIMEOUT,
-}
-
 # Fields forwarded verbatim to ``create_prompt_assembly``.
 _PROMPT_ASSEMBLY_FIELDS = (
     "system_prompt",
@@ -323,9 +313,9 @@ def _ingest_retrieval_into_step(step_id: int, retrieval: dict):
 
 
 def _validate_status(value: Optional[str], field: str) -> None:
-    if value is not None and value not in _ALLOWED_STATUS:
+    if value is not None and value not in AgentStatus.ALL:
         raise ValidationError(
-            f"invalid {field}: {value!r}; allowed: {sorted(_ALLOWED_STATUS)}"
+            f"invalid {field}: {value!r}; allowed: {sorted(AgentStatus.ALL)}"
         )
 
 

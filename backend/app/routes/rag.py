@@ -12,7 +12,7 @@ Response conventions (shared with the rest of the API):
 """
 from flask import Blueprint, jsonify, request
 
-from ..errors import error_response
+from ..errors import error_response, get_json_body
 from ..serializers.rag import (
     serialize_prompt_assembly,
     serialize_retrieval_detail,
@@ -33,7 +33,7 @@ def create_retrieval():
     run+step (the RAG Observatory lists retrievals that hang off agent steps).
     Returns the created retrieval with documents, embedding and timeline.
     """
-    data = request.get_json(silent=True) or {}
+    data = get_json_body()
     retrieval = ingest_service.ingest_retrieval(data)
     return jsonify(serialize_retrieval_detail(retrieval)), 201
 

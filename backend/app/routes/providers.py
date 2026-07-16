@@ -9,6 +9,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
+from ..errors import error_response
 from ..providers import ProviderNotFoundError, provider_registry
 
 logger = logging.getLogger("agentscope")
@@ -41,7 +42,7 @@ def get_provider(name: str):
     try:
         return jsonify(provider_registry.info(name).to_dict())
     except ProviderNotFoundError:
-        return jsonify({"error": f"provider '{name}' not found"}), 404
+        return error_response(f"provider '{name}' not found", 404)
 
 
 @providers_bp.get("/providers/<name>/health")
@@ -50,7 +51,7 @@ def provider_health(name: str):
     try:
         provider = provider_registry.create(name)
     except ProviderNotFoundError:
-        return jsonify({"error": f"provider '{name}' not found"}), 404
+        return error_response(f"provider '{name}' not found", 404)
     status = provider.health_check()
     body = {"provider": name, **status.to_dict()}
     return jsonify(body), 200 if status.configured else 503

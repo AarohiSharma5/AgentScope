@@ -4,7 +4,9 @@ Kept separate from the core ``errors`` module so the auth subsystem is fully
 self-contained and additive. :func:`register_auth_error_handlers` wires the
 handlers into the app factory.
 """
-from flask import Flask, jsonify
+from flask import Flask
+
+from ..errors import error_response
 
 
 class AuthError(Exception):
@@ -43,14 +45,14 @@ def register_auth_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(AuthError)
     def _handle_auth(exc: AuthError):
-        return jsonify({"error": exc.message}), exc.status
+        return error_response(exc.message, exc.status)
 
     @app.errorhandler(AuthzError)
     def _handle_authz(exc: AuthzError):
-        return jsonify({"error": exc.message}), exc.status
+        return error_response(exc.message, exc.status)
 
     @app.errorhandler(RateLimitError)
     def _handle_rate_limit(exc: RateLimitError):
-        response = jsonify({"error": exc.message})
+        response, status = error_response(exc.message, exc.status)
         response.headers["Retry-After"] = str(exc.retry_after)
-        return response, exc.status
+        return response, status

@@ -12,20 +12,13 @@ Response conventions (shared across the v0.2 API):
 """
 from flask import Blueprint, jsonify, request
 
-from ..errors import error_response
+from ..errors import error_response, get_json_body
 from ..models.agent_trace import AgentStatus
 from ..serializers.agent import serialize_run_detail, serialize_run_summary
 from ..services import ingest_service, trace_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 agent_traces_bp = Blueprint("agent_traces", __name__)
-
-_ALLOWED_STATUS = {
-    AgentStatus.PENDING,
-    AgentStatus.RUNNING,
-    AgentStatus.SUCCESS,
-    AgentStatus.FAILED,
-}
 
 
 @agent_traces_bp.post("/agent-runs")
@@ -36,7 +29,7 @@ def create_agent_run():
     omitted, a minimal parent trace is created from the top-level fields. Returns
     the created run with its steps, sub-records and timeline (same shape as GET).
     """
-    data = request.get_json(silent=True) or {}
+    data = get_json_body()
     run = ingest_service.ingest_agent_run(data)
     return jsonify(serialize_run_detail(run)), 201
 
@@ -50,9 +43,9 @@ def list_agent_runs():
         return error_response(str(exc), 400)
 
     status = request.args.get("status")
-    if status is not None and status not in _ALLOWED_STATUS:
+    if status is not None and status not in AgentStatus.ALL:
         return error_response(
-            "invalid status", 400, {"allowed": sorted(_ALLOWED_STATUS)}
+            "invalid status", 400, {"allowed": sorted(AgentStatus.ALL)}
         )
     agent_type = request.args.get("agent_type")
 

@@ -14,6 +14,47 @@ def test_chat_endpoint_requires_prompt(client):
     assert "error" in res.get_json()
 
 
+def test_malformed_body_reports_json_error_not_missing_field(client):
+    """Invalid JSON / wrong content-type / empty body -> a clear parse error (M5).
+
+    Previously ``get_json(silent=True) or {}`` swallowed the parse failure and
+    surfaced a misleading "<field> is required"; now the message names the real
+    problem, and the response still uses the standard {"error": ...} envelope.
+    """
+    for endpoint in ("/api/chat", "/api/traces", "/api/agent-runs", "/api/retrievals"):
+        # Malformed JSON with the JSON content-type.
+        bad = client.post(endpoint, data="{not json", content_type="application/json")
+        assert bad.status_code == 400, endpoint
+        assert "JSON" in bad.get_json()["error"], endpoint
+
+        # Empty body / no content-type at all.
+        empty = client.post(endpoint)
+        assert empty.status_code == 400, endpoint
+        assert "JSON" in empty.get_json()["error"], endpoint
+
+
+def test_agent_run_status_filter_accepts_all_ingestable_statuses(client):
+    """The list filter shares one status enum with ingestion (M7).
+
+    A run ingested with ``cancelled``/``timeout`` (accepted by ingestion) must be
+    filterable by that same status instead of the filter rejecting it as invalid.
+    """
+    from app.models.agent_trace import AgentStatus
+
+    res = client.post(
+        "/api/agent-runs",
+        json={"agent_name": "worker", "model_name": "gpt-4o", "status": "cancelled"},
+    )
+    assert res.status_code == 201
+
+    for status in AgentStatus.ALL:
+        ok = client.get(f"/api/agent-runs?status={status}")
+        assert ok.status_code == 200, status
+
+    listed = client.get("/api/agent-runs?status=cancelled").get_json()
+    assert listed["pagination"]["total"] == 1
+
+
 def test_chat_endpoint_returns_response_and_ids(client):
     body = _seed_run(client, "What is AgentScope?")
     assert body["status"] == "success"

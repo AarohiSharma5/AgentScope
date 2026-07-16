@@ -16,6 +16,7 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from ..auth import require_admin
+from ..errors import error_response
 from ..plugins import (
     ALL_CAPABILITIES,
     Capability,
@@ -59,10 +60,10 @@ def list_extensions():
     """List registered contributions, optionally filtered by ``?capability=``."""
     capability = request.args.get("capability")
     if capability is not None and capability not in ALL_CAPABILITIES:
-        return (
-            jsonify({"error": f"unknown capability '{capability}'",
-                     "capabilities": sorted(ALL_CAPABILITIES)}),
+        return error_response(
+            f"unknown capability '{capability}'",
             400,
+            {"capabilities": sorted(ALL_CAPABILITIES)},
         )
     contributions = plugin_registry.all_contributions()
     if capability:
@@ -76,7 +77,7 @@ def get_plugin(name: str):
     try:
         return jsonify(plugin_manager.get(name).to_dict())
     except PluginNotFoundError:
-        return jsonify({"error": f"plugin '{name}' not found"}), 404
+        return error_response(f"plugin '{name}' not found", 404)
 
 
 @plugins_bp.post("/plugins/<name>/enable")
@@ -86,11 +87,11 @@ def enable_plugin(name: str):
         record = plugin_manager.enable(name)
         return jsonify(record.to_dict())
     except PluginNotFoundError:
-        return jsonify({"error": f"plugin '{name}' not found"}), 404
+        return error_response(f"plugin '{name}' not found", 404)
     except PluginDependencyError as exc:
-        return jsonify({"error": str(exc)}), 409
+        return error_response(str(exc), 409)
     except PluginError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return error_response(str(exc), 400)
 
 
 @plugins_bp.post("/plugins/<name>/disable")
@@ -102,7 +103,7 @@ def disable_plugin(name: str):
         record = plugin_manager.disable(name, cascade=cascade)
         return jsonify(record.to_dict())
     except PluginNotFoundError:
-        return jsonify({"error": f"plugin '{name}' not found"}), 404
+        return error_response(f"plugin '{name}' not found", 404)
 
 
 @plugins_bp.post("/plugins/<name>/reload")
@@ -112,9 +113,9 @@ def reload_plugin(name: str):
         record = plugin_manager.reload(name)
         return jsonify(record.to_dict())
     except PluginNotFoundError:
-        return jsonify({"error": f"plugin '{name}' not found"}), 404
+        return error_response(f"plugin '{name}' not found", 404)
     except PluginError as exc:
-        return jsonify({"error": str(exc)}), 400
+        return error_response(str(exc), 400)
 
 
 @plugins_bp.delete("/plugins/<name>")
@@ -124,4 +125,4 @@ def uninstall_plugin(name: str):
         plugin_manager.uninstall(name)
         return jsonify({"status": "uninstalled", "name": name})
     except PluginNotFoundError:
-        return jsonify({"error": f"plugin '{name}' not found"}), 404
+        return error_response(f"plugin '{name}' not found", 404)

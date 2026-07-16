@@ -1,7 +1,7 @@
 """REST API endpoints for traces and dashboard stats."""
 from flask import Blueprint, jsonify, request
 
-from ..errors import error_response
+from ..errors import error_response, get_json_body
 from ..services import trace_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
@@ -11,7 +11,7 @@ traces_bp = Blueprint("traces", __name__)
 @traces_bp.post("/traces")
 def create_trace():
     """Ingest a new LLM request trace."""
-    data = request.get_json(silent=True) or {}
+    data = get_json_body()
     if not data.get("model_name"):
         return error_response("model_name is required", 400)
 
