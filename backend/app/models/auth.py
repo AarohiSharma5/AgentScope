@@ -226,6 +226,49 @@ class ApiKey(db.Model):
         return data
 
 
+class RefreshToken(db.Model):
+    """A server-side record of an issued refresh token (rotation + revocation).
+
+    Refresh tokens are no longer purely stateless: each carries a unique ``jti``
+    recorded here, so a token can be revoked (on logout, password change, or
+    reuse detection) instead of remaining valid for its full TTL. Tokens are
+    grouped into a ``family_id`` — one family per login — and every refresh
+    *rotates* the token (the old one is marked used + revoked, a new one issued).
+    Presenting an already-rotated token (the classic signature of a stolen token
+    being replayed) revokes the whole family, not just the replayed token.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_user_revoked", "user_id", "revoked"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    family_id = db.Column(db.String(64), nullable=False, index=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issued_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    # Revoked when rotated (exchanged), on password change, or on reuse detection.
+    revoked = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    # Set the moment the token is exchanged; a second exchange is reuse.
+    used_at = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "jti": self.jti,
+            "family_id": self.family_id,
+            "user_id": self.user_id,
+            "issued_at": self.issued_at.isoformat() if self.issued_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "revoked": self.revoked,
+            "used_at": self.used_at.isoformat() if self.used_at else None,
+        }
+
+
 class AuditLog(db.Model):
     """An append-only record of a security-relevant action."""
 

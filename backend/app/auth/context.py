@@ -156,8 +156,9 @@ def resolve_identity() -> Optional[Identity]:
 
 def _identity_from_jwt(token: str) -> Identity:
     secret = current_app.config["JWT_SECRET"]
+    issuer = current_app.config.get("JWT_ISSUER") or None
     try:
-        claims = tokens.decode(token, secret, expected_type="access")
+        claims = tokens.decode(token, secret, expected_type="access", issuer=issuer)
     except tokens.ExpiredToken:
         raise AuthError("access token has expired")
     except tokens.TokenError:

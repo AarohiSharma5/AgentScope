@@ -139,6 +139,10 @@ def change_password():
 
     user.set_password(new_password)
     db.session.commit()
+    # Sever every existing session: a refresh token stolen before the reset must
+    # not survive it (M11). Access tokens are short-lived and expire on their own.
+    revoked = auth_service.revoke_user_refresh_tokens(user.id)
     audit_service.record("user.password_changed", identity=identity,
-                         target_type="user", target_id=user.id)
+                         target_type="user", target_id=user.id,
+                         metadata={"revoked_refresh_tokens": revoked})
     return jsonify({"status": "ok"})

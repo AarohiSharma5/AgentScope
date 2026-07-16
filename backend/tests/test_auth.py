@@ -49,6 +49,40 @@ def test_jwt_expiry():
         tokens.decode(token, "secret")
 
 
+def test_jwt_rejects_alg_none(monkeypatch):
+    """A token asking for alg=none (or any unsupported alg) is rejected (M12)."""
+    import base64
+    import json
+
+    def seg(obj):
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    forged = f"{seg({'alg': 'none', 'typ': 'JWT'})}.{seg({'sub': 1, 'exp': 9999999999})}."
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(forged, "secret")
+
+
+def test_jwt_requires_exp(monkeypatch):
+    """A token minted without exp cannot be replayed forever (M12)."""
+    token = tokens.encode({"sub": 1}, "secret")  # no expires_in -> no exp claim
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(token, "secret")
+    # Opt-out is available for callers that intentionally allow non-expiring tokens.
+    assert tokens.decode(token, "secret", require_exp=False)["sub"] == 1
+
+
+def test_jwt_verifies_issuer():
+    """When an issuer is expected it must be present and match (M12)."""
+    token = tokens.encode({"sub": 1, "iss": "agentscope"}, "secret", expires_in=60)
+    assert tokens.decode(token, "secret", issuer="agentscope")["sub"] == 1
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(token, "secret", issuer="someone-else")
+    other = tokens.encode({"sub": 1}, "secret", expires_in=60)  # no iss claim
+    with pytest.raises(tokens.InvalidToken):
+        tokens.decode(other, "secret", issuer="agentscope")
+
+
 # -- unit: keys, roles, rate limit ------------------------------------------
 
 
@@ -134,6 +168,53 @@ def test_refresh_token(client):
     resp = client.post("/api/auth/refresh", json={"refresh_token": body["tokens"]["refresh_token"]})
     assert resp.status_code == 200
     assert "access_token" in resp.get_json()["tokens"]
+
+
+def test_refresh_token_is_single_use_and_rotates(client):
+    """A refresh token works once; the old one is revoked after rotation (M11)."""
+    body = _register(client)
+    original = body["tokens"]["refresh_token"]
+
+    first = client.post("/api/auth/refresh", json={"refresh_token": original})
+    assert first.status_code == 200
+    rotated = first.get_json()["tokens"]["refresh_token"]
+    assert rotated != original
+
+    # The rotated token is valid...
+    assert client.post("/api/auth/refresh", json={"refresh_token": rotated}).status_code == 200
+    # ...but replaying the original (already-rotated) token is rejected.
+    assert client.post("/api/auth/refresh", json={"refresh_token": original}).status_code == 401
+
+
+def test_refresh_token_reuse_revokes_whole_family(client):
+    """Replaying a rotated token revokes the family, killing the live token (M11)."""
+    body = _register(client)
+    original = body["tokens"]["refresh_token"]
+
+    rotated = client.post(
+        "/api/auth/refresh", json={"refresh_token": original}
+    ).get_json()["tokens"]["refresh_token"]
+
+    # Replay the already-used original -> reuse detected -> family revoked.
+    assert client.post("/api/auth/refresh", json={"refresh_token": original}).status_code == 401
+    # The legitimately-rotated token is now revoked too, forcing a re-login.
+    assert client.post("/api/auth/refresh", json={"refresh_token": rotated}).status_code == 401
+
+
+def test_password_change_revokes_refresh_tokens(client):
+    """Changing a password invalidates refresh tokens issued before it (M11)."""
+    body = _register(client)
+    refresh = body["tokens"]["refresh_token"]
+    headers = _auth_header(body["tokens"])
+
+    changed = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "newpassword123"},
+        headers=headers,
+    )
+    assert changed.status_code == 200
+    # The pre-reset refresh token no longer works.
+    assert client.post("/api/auth/refresh", json={"refresh_token": refresh}).status_code == 401
 
 
 def test_me_requires_auth(client):

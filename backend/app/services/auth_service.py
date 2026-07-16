@@ -6,7 +6,8 @@ checks. No business logic lives in the route layer.
 """
 import logging
 import re
-from datetime import timezone
+import secrets
+from datetime import timedelta, timezone
 from typing import List, Optional, Tuple
 
 from flask import current_app
@@ -15,7 +16,7 @@ from ..auth import keys, tokens
 from ..auth.errors import AuthError, AuthzError
 from ..auth.roles import Role, is_valid_role, role_satisfies
 from ..extensions import db
-from ..models.auth import ApiKey, Membership, Organization, Project, User
+from ..models.auth import ApiKey, Membership, Organization, Project, RefreshToken, User
 from ..utils.timeutils import utcnow
 
 logger = logging.getLogger("agentscope")
@@ -97,33 +98,103 @@ def authenticate(email: str, password: str) -> Optional[User]:
 # -- JWT issuance -----------------------------------------------------------
 
 
-def issue_tokens(user: User) -> dict:
-    """Mint an access + refresh token pair for a user."""
-    secret = current_app.config["JWT_SECRET"]
-    access_ttl = int(current_app.config["JWT_ACCESS_TTL"])
-    refresh_ttl = int(current_app.config["JWT_REFRESH_TTL"])
-    base = {"sub": user.id, "email": user.email, "iss": current_app.config.get("JWT_ISSUER")}
+def _jwt_config() -> Tuple[str, int, int, Optional[str]]:
+    """Return ``(secret, access_ttl, refresh_ttl, issuer)`` from app config."""
+    return (
+        current_app.config["JWT_SECRET"],
+        int(current_app.config["JWT_ACCESS_TTL"]),
+        int(current_app.config["JWT_REFRESH_TTL"]),
+        current_app.config.get("JWT_ISSUER") or None,
+    )
+
+
+def _mint_token_pair(user: User, family_id: str) -> dict:
+    """Record a new refresh token in ``family_id`` and mint a matching pair.
+
+    Each pair carries a fresh ``jti`` persisted in :class:`RefreshToken`, so the
+    refresh side is revocable and single-use (see :func:`refresh_access_token`).
+    Commits the new record together with any pending rotation bookkeeping.
+    """
+    secret, access_ttl, refresh_ttl, issuer = _jwt_config()
+    jti = secrets.token_hex(16)
+    db.session.add(
+        RefreshToken(
+            jti=jti,
+            family_id=family_id,
+            user_id=user.id,
+            expires_at=utcnow() + timedelta(seconds=refresh_ttl),
+        )
+    )
+    db.session.commit()
+    access_claims = {"sub": user.id, "email": user.email, "iss": issuer}
+    refresh_claims = {"sub": user.id, "jti": jti, "fam": family_id, "iss": issuer}
     return {
         "token_type": "Bearer",
         "expires_in": access_ttl,
-        "access_token": tokens.encode({**base}, secret, expires_in=access_ttl, token_type="access"),
-        "refresh_token": tokens.encode({"sub": user.id}, secret, expires_in=refresh_ttl, token_type="refresh"),
+        "access_token": tokens.encode(access_claims, secret, expires_in=access_ttl, token_type="access"),
+        "refresh_token": tokens.encode(refresh_claims, secret, expires_in=refresh_ttl, token_type="refresh"),
     }
 
 
+def issue_tokens(user: User) -> dict:
+    """Start a new refresh-token family and mint the first access+refresh pair."""
+    return _mint_token_pair(user, secrets.token_hex(16))
+
+
+def _revoke_family(family_id: str) -> None:
+    RefreshToken.query.filter_by(family_id=family_id, revoked=False).update(
+        {"revoked": True}, synchronize_session=False
+    )
+
+
+def revoke_user_refresh_tokens(user_id: int) -> int:
+    """Revoke every active refresh token for a user; return how many were revoked.
+
+    Called on password change so a stolen refresh token stops working immediately
+    instead of remaining valid for the rest of its (up to 30-day) TTL.
+    """
+    count = RefreshToken.query.filter_by(user_id=user_id, revoked=False).update(
+        {"revoked": True}, synchronize_session=False
+    )
+    db.session.commit()
+    return count
+
+
 def refresh_access_token(refresh_token: str) -> dict:
-    """Exchange a valid refresh token for a fresh token pair."""
-    secret = current_app.config["JWT_SECRET"]
+    """Rotate a valid refresh token, returning a fresh access+refresh pair.
+
+    Refresh tokens are single-use: the presented token is revoked and replaced by
+    a new one in the same family. Presenting an already-rotated or revoked token
+    (the classic signature of a stolen token being replayed) revokes the entire
+    family so the legitimate user's session is severed too, forcing re-login.
+    """
+    secret, _, _, issuer = _jwt_config()
     try:
-        claims = tokens.decode(refresh_token, secret, expected_type="refresh")
+        claims = tokens.decode(refresh_token, secret, expected_type="refresh", issuer=issuer)
     except tokens.ExpiredToken:
         raise AuthError("refresh token has expired")
     except tokens.TokenError:
         raise AuthError("invalid refresh token")
-    user = db.session.get(User, claims.get("sub"))
+
+    jti = claims.get("jti")
+    record = RefreshToken.query.filter_by(jti=jti).first() if jti else None
+    if record is None:
+        raise AuthError("invalid refresh token")
+    if record.revoked or record.used_at is not None:
+        # Reuse of a rotated/revoked token: treat as compromise, kill the family.
+        _revoke_family(record.family_id)
+        db.session.commit()
+        raise AuthError("refresh token has been revoked")
+    if _aware(record.expires_at) is not None and _aware(record.expires_at) <= utcnow():
+        raise AuthError("refresh token has expired")
+
+    user = db.session.get(User, record.user_id)
     if user is None or not user.is_active:
         raise AuthError("user not found or inactive")
-    return issue_tokens(user)
+
+    record.used_at = utcnow()
+    record.revoked = True
+    return _mint_token_pair(user, record.family_id)
 
 
 # -- organizations & memberships --------------------------------------------
