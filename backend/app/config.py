@@ -135,6 +135,14 @@ class Config:
     # API keys are minted with this human-readable prefix (e.g. ``as_...``).
     API_KEY_PREFIX = os.getenv("API_KEY_PREFIX", "as")
 
+    # Debounce window (seconds) for persisting ApiKey.last_used_at. Writing it on
+    # every authenticated request causes write amplification / row-lock contention
+    # on a hot key under ingest-heavy traffic; instead we persist at most once per
+    # window per key. Set 0 to write on every request (exact, but contended).
+    API_KEY_LAST_USED_DEBOUNCE_SECONDS = int(
+        os.getenv("API_KEY_LAST_USED_DEBOUNCE_SECONDS", "60")
+    )
+
     # In-memory rate limiting (per process). Applied to auth endpoints and
     # available as a decorator for any route.
     RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"

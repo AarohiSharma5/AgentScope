@@ -276,6 +276,83 @@ def test_api_key_cannot_cross_organizations(client):
     assert resp.status_code == 403
 
 
+# -- API key: last_used_at debounce (M1) ------------------------------------
+
+
+def _make_api_key(client, role=Role.DEVELOPER, email="k@k.test", org="Keys"):
+    admin = _register(client, email=email, org=org)
+    org_id = admin["organization"]["id"]
+    created = client.post(
+        f"/api/organizations/{org_id}/api-keys",
+        json={"name": "k", "role": role},
+        headers=_auth_header(admin["tokens"]),
+    )
+    assert created.status_code == 201
+    body = created.get_json()
+    return body["key"], body["id"]
+
+
+def test_should_flush_last_used_debounces_per_key():
+    """The in-memory gate returns True at most once per window per key (M1)."""
+    from datetime import timedelta
+
+    from app.auth import context as ctx
+    from app.utils.timeutils import utcnow
+
+    ctx._last_used_flushed.clear()
+    t0 = utcnow()
+    # First observation flushes; an immediate repeat within the window does not.
+    assert ctx._should_flush_last_used(4242, t0, 60) is True
+    assert ctx._should_flush_last_used(4242, t0, 60) is False
+    # Once the window elapses, it flushes again.
+    assert ctx._should_flush_last_used(4242, t0 + timedelta(seconds=61), 60) is True
+    # A different key is tracked independently.
+    assert ctx._should_flush_last_used(9999, t0, 60) is True
+
+
+def test_api_key_last_used_is_debounced(client, app):
+    """Rapid repeat auth with one key rewrites last_used_at only once (M1)."""
+    from app.auth import context as ctx
+    from app.extensions import db
+    from app.models.auth import ApiKey
+
+    ctx._last_used_flushed.clear()
+    raw, key_id = _make_api_key(client)
+
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 200
+    with app.app_context():
+        first = db.session.get(ApiKey, key_id).last_used_at
+    assert first is not None
+
+    # A second call within the (default 60s) window must not rewrite the row.
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 200
+    with app.app_context():
+        second = db.session.get(ApiKey, key_id).last_used_at
+    assert second == first
+
+
+def test_api_key_last_used_debounce_disabled(client, app):
+    """A window of 0 restores exact write-on-every-request behavior (M1)."""
+    from app.auth import context as ctx
+    from app.extensions import db
+    from app.models.auth import ApiKey
+
+    ctx._last_used_flushed.clear()
+    app.config["API_KEY_LAST_USED_DEBOUNCE_SECONDS"] = 0
+    raw, key_id = _make_api_key(client, email="k2@k.test", org="Keys2")
+
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 200
+    with app.app_context():
+        first = db.session.get(ApiKey, key_id).last_used_at
+
+    time.sleep(0.01)
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 200
+    with app.app_context():
+        second = db.session.get(ApiKey, key_id).last_used_at
+    # Both calls wrote, so the timestamp advanced.
+    assert first is not None and second is not None and second > first
+
+
 # -- API: audit logs & rate limiting ----------------------------------------
 
 

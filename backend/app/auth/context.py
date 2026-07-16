@@ -5,7 +5,10 @@ request — either a user (via JWT) or an API key. It is stashed on Flask's ``g`
 so decorators, services and audit logging can read it without re-parsing
 credentials.
 """
+import logging
+import threading
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from flask import current_app, g, has_request_context, request
@@ -17,7 +20,20 @@ from . import tokens
 from .errors import AuthError, AuthzError
 from .keys import hash_key
 
+logger = logging.getLogger(__name__)
+
 _IDENTITY_ATTR = "agentscope_identity"
+
+#: Debounce window (seconds) for persisting ``ApiKey.last_used_at``. Updating it
+#: on every authenticated request causes write amplification and row-lock
+#: contention on a hot key under ingest-heavy traffic. Instead we remember, per
+#: process, when each key was last persisted and skip the write until the window
+#: elapses — so a key hit thousands of times a minute yields at most one UPDATE
+#: per window. Overridable via ``API_KEY_LAST_USED_DEBOUNCE_SECONDS`` (0 = write
+#: every request, the old behavior).
+_DEFAULT_LAST_USED_DEBOUNCE_SECONDS = 60
+_last_used_flushed: dict[int, datetime] = {}
+_last_used_lock = threading.Lock()
 
 #: Sentinel organization id used to scope an authenticated-but-org-less principal
 #: to *no* rows. Organization ids are positive autoincrement values, so filtering
@@ -196,8 +212,7 @@ def _identity_from_api_key(raw: str) -> Identity:
     key = ApiKey.query.filter_by(key_hash=hash_key(raw)).first()
     if key is None or not key.is_valid():
         raise AuthError("invalid or revoked API key")
-    key.last_used_at = utcnow()
-    db.session.commit()
+    _touch_last_used(key)
     return Identity(
         auth_type="api_key",
         api_key_id=key.id,
@@ -205,3 +220,50 @@ def _identity_from_api_key(raw: str) -> Identity:
         project_id=key.project_id,
         role=key.role,
     )
+
+
+def _debounce_interval() -> float:
+    """Configured debounce window in seconds (falls back to the default)."""
+    if has_request_context():
+        return current_app.config.get(
+            "API_KEY_LAST_USED_DEBOUNCE_SECONDS", _DEFAULT_LAST_USED_DEBOUNCE_SECONDS
+        )
+    return _DEFAULT_LAST_USED_DEBOUNCE_SECONDS
+
+
+def _should_flush_last_used(key_id: int, now: datetime, interval: float) -> bool:
+    """True at most once per ``interval`` seconds per key (thread-safe).
+
+    The slot is reserved *inside* the lock, so a burst of concurrent requests for
+    the same hot key produces a single writer rather than a thundering herd all
+    updating the same row at once.
+    """
+    with _last_used_lock:
+        last = _last_used_flushed.get(key_id)
+        if last is not None and (now - last).total_seconds() < interval:
+            return False
+        _last_used_flushed[key_id] = now
+        return True
+
+
+def _touch_last_used(key: ApiKey) -> None:
+    """Persist ``last_used_at``, debounced to at most once per window per key.
+
+    Best-effort telemetry: a failure here must never break authentication, so we
+    roll back and continue (releasing the reservation so a later request retries).
+    """
+    interval = _debounce_interval()
+    now = utcnow()
+    # interval == 0 disables debouncing (write on every request, old behavior).
+    if interval and not _should_flush_last_used(key.id, now, interval):
+        return
+    key.last_used_at = now
+    try:
+        db.session.commit()
+    except Exception:  # pragma: no cover - defensive; auth must not fail on this
+        db.session.rollback()
+        with _last_used_lock:
+            _last_used_flushed.pop(key.id, None)
+        logger.warning(
+            "failed to persist api_key.last_used_at for key id=%s", key.id, exc_info=True
+        )

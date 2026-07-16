@@ -439,24 +439,7 @@ class TraceRecorder:
         else:
             self.finish_agent(run, status=AgentStatus.SUCCESS)
 
-    @contextmanager
-    def step(
-        self,
-        run: AgentRun,
-        step_type: Optional[str] = None,
-        name: Optional[str] = None,
-        input: Optional[str] = None,  # noqa: A002 - matches public SDK API
-        metadata: Optional[dict] = None,
-    ):
-        """Scope a step; marks it failed and re-raises on exception."""
-        step = self.add_step(run, step_type=step_type, name=name, input=input, metadata=metadata)
-        try:
-            yield step
-        except Exception as exc:  # noqa: BLE001 - record then re-raise
-            self.finish_step(step, status=AgentStatus.FAILED, metadata=self._error_meta(metadata, exc))
-            raise
-        else:
-            self.finish_step(step, status=AgentStatus.SUCCESS)
+ 
 
     # -- High-level chatbot-flow helpers ------------------------------------
     #
