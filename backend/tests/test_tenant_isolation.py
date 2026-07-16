@@ -56,7 +56,7 @@ def test_traces_are_isolated_per_organization(tenant_app):
     id_a, id_b = ra.get_json()["id"], rb.get_json()["id"]
 
     # Org A lists only its own trace...
-    list_a = client.get("/api/traces", headers={"X-API-Key": key_a}).get_json()
+    list_a = client.get("/api/traces", headers={"X-API-Key": key_a}).get_json()["data"]
     ids_a = {t["id"] for t in list_a}
     assert id_a in ids_a and id_b not in ids_a
 
@@ -167,7 +167,7 @@ def test_jwt_single_membership_is_auto_scoped(tenant_app):
     id_b = client.post("/api/traces", json={"model_name": "gpt-4o", "user_prompt": "B"},
                        headers={"X-API-Key": key_b}).get_json()["id"]
 
-    ids = {t["id"] for t in client.get("/api/traces", headers=auth).get_json()}
+    ids = {t["id"] for t in client.get("/api/traces", headers=auth).get_json()["data"]}
     assert own_id in ids and id_b not in ids
 
 
@@ -192,10 +192,12 @@ def test_jwt_multi_org_requires_active_org_selection(tenant_app):
                 headers={**auth, "X-Organization-Id": str(beta_id)})
 
     # No active org selected -> deny-by-default (nothing), not every org's data.
-    assert client.get("/api/traces", headers=auth).get_json() == []
+    assert client.get("/api/traces", headers=auth).get_json()["data"] == []
 
     # With a header, scoped to that org only.
-    acme_list = client.get("/api/traces", headers={**auth, "X-Organization-Id": str(acme_id)}).get_json()
+    acme_list = client.get(
+        "/api/traces", headers={**auth, "X-Organization-Id": str(acme_id)}
+    ).get_json()["data"]
     assert [t["user_prompt"] for t in acme_list] == ["acme"]
 
     # A header for an org the user does not belong to -> 403.

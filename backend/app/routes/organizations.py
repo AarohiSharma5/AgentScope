@@ -39,19 +39,25 @@ def _effective_role(org_id: int) -> str:
 @orgs_bp.get("/organizations")
 @require_auth
 def list_organizations():
-    """List organizations the current user belongs to."""
+    """List organizations the current user belongs to (paginated)."""
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
+
     identity = current_identity()
     if identity.auth_type != "jwt":
-        # An API key is scoped to a single organization.
+        # An API key is scoped to a single organization: a fixed one-item page.
         org = auth_service.get_organization(identity.organization_id)
-        return jsonify({"data": [org.to_dict()] if org else []})
+        items = [org.to_dict()] if org and page == 1 else []
+        return jsonify(paginated(items, page, limit, 1 if org else 0))
 
     from ..extensions import db
     from ..models.auth import User
 
     user = db.session.get(User, identity.user_id)
-    orgs = auth_service.list_user_organizations(user)
-    return jsonify({"data": [o.to_dict() for o in orgs]})
+    orgs, total = auth_service.list_user_organizations_page(user, page, limit)
+    return jsonify(paginated([o.to_dict() for o in orgs], page, limit, total))
 
 
 @orgs_bp.post("/organizations")
@@ -95,8 +101,12 @@ def get_organization(org_id: int):
 @orgs_bp.get("/organizations/<int:org_id>/members")
 @require_role(Role.VIEWER)
 def list_members(org_id: int):
-    members = auth_service.list_members(org_id)
-    return jsonify({"data": [m.to_dict() for m in members]})
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
+    members, total = auth_service.list_members_page(org_id, page, limit)
+    return jsonify(paginated([m.to_dict() for m in members], page, limit, total))
 
 
 @orgs_bp.post("/organizations/<int:org_id>/members")
@@ -155,8 +165,12 @@ def remove_member(org_id: int, user_id: int):
 @orgs_bp.get("/organizations/<int:org_id>/projects")
 @require_role(Role.VIEWER)
 def list_projects(org_id: int):
-    projects = auth_service.list_projects(org_id)
-    return jsonify({"data": [p.to_dict() for p in projects]})
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
+    projects, total = auth_service.list_projects_page(org_id, page, limit)
+    return jsonify(paginated([p.to_dict() for p in projects], page, limit, total))
 
 
 @orgs_bp.post("/organizations/<int:org_id>/projects")
@@ -190,9 +204,13 @@ def get_project(project_id: int):
 @orgs_bp.get("/organizations/<int:org_id>/api-keys")
 @require_role(Role.DEVELOPER)
 def list_api_keys(org_id: int):
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
     project_id = request.args.get("project_id", type=int)
-    keys = auth_service.list_api_keys(org_id, project_id=project_id)
-    return jsonify({"data": [k.to_dict() for k in keys]})
+    keys, total = auth_service.list_api_keys_page(org_id, page, limit, project_id=project_id)
+    return jsonify(paginated([k.to_dict() for k in keys], page, limit, total))
 
 
 @orgs_bp.post("/organizations/<int:org_id>/api-keys")

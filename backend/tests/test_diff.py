@@ -73,6 +73,43 @@ def test_prompt_version_increments_and_deduplicates(app_ctx):
     assert total == 2
 
 
+def test_prompt_version_retries_past_auto_version_collision(app_ctx, monkeypatch):
+    """A concurrent writer that already claimed ``v{n}`` makes us recompute (M2).
+
+    Simulated by forcing the first auto-version computation to return an
+    already-used label; the unique constraint rejects the insert and the service
+    recomputes the next free label instead of failing or duplicating.
+    """
+    run = _run_with_prompt("prompt one")  # -> v1 (auto)
+
+    real_next = prompt_service._next_auto_version
+    calls = {"n": 0}
+
+    def flaky_next(agent_run_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "v1"  # collides with the row created above
+        return real_next(agent_run_id)
+
+    monkeypatch.setattr(prompt_service, "_next_auto_version", flaky_next)
+
+    v2 = prompt_service.record_prompt_version(run.id, "prompt two")
+    assert v2.version == "v2"  # retried past the collision, no duplicate
+    assert calls["n"] >= 2
+    _, total = prompt_service.list_prompt_versions(agent_run_id=run.id)
+    assert total == 2
+
+
+def test_prompt_version_explicit_duplicate_is_rejected(app_ctx):
+    """An explicit version that already exists is a genuine caller error (M2)."""
+    from sqlalchemy.exc import IntegrityError
+
+    run = _run_with_prompt("prompt one")
+    prompt_service.record_prompt_version(run.id, "prompt two", version="custom")
+    with pytest.raises(IntegrityError):
+        prompt_service.record_prompt_version(run.id, "prompt three", version="custom")
+
+
 # -- Prompt diff ------------------------------------------------------------
 
 

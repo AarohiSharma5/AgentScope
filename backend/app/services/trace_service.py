@@ -29,7 +29,7 @@ from ..models.rag_trace import EmbeddingTrace, PromptAssembly, RetrievedDocument
 from ..utils.cache import cached
 from ..utils.sorting import apply_sort, is_valid_sort
 from ..utils.timeutils import utcnow
-from ..utils.unit_of_work import commit as _commit
+from ..utils.unit_of_work import commit as _commit, deferring
 from ..utils.tokens import estimate_tokens
 from ..utils.validation import ensure_json_array, ensure_json_object
 
@@ -102,6 +102,25 @@ def _org_of_step(step_id: int) -> Optional[int]:
     return run.organization_id if run is not None else None
 
 
+def invalidate_metrics_cache(organization_id: Optional[int] = None) -> None:
+    """Drop cached dashboard aggregates affected by a write.
+
+    A write for one tenant changes both that tenant's scoped aggregates and the
+    unscoped (``organization_id=None``) totals, so both cache entries are
+    dropped. This is intentionally coarse (all three trace-side metric caches)
+    but cheap — a handful of dict removals — and keeps freshly written data from
+    being masked by a still-warm cache entry until its TTL lapses.
+
+    Call this only *after* the writing transaction has actually committed;
+    invalidating mid-transaction (see :func:`app.utils.unit_of_work.deferring`)
+    would let a concurrent reader repopulate the cache from uncommitted state.
+    """
+    for fn in (_stats_for_org, _agent_metrics_for_org, _rag_metrics_for_org):
+        fn.invalidate(organization_id)
+        if organization_id is not None:
+            fn.invalidate(None)
+
+
 def create_trace(data: dict) -> Trace:
     """Create and persist a Trace from a payload dict."""
     input_tokens = data.get("input_tokens")
@@ -136,6 +155,8 @@ def create_trace(data: dict) -> Trace:
     )
     db.session.add(trace)
     _commit()
+    if not deferring():
+        invalidate_metrics_cache(trace.organization_id)
     logger.debug("Created trace id=%s model=%s", trace.id, trace.model_name)
     emit(
         EventType.TRACE_STARTED,
@@ -165,6 +186,7 @@ def update_trace(trace_id: int, **fields) -> Optional[Trace]:
         trace.total_tokens = (trace.input_tokens or 0) + (trace.output_tokens or 0)
 
     db.session.commit()
+    invalidate_metrics_cache(trace.organization_id)
     # A terminal status marks the request finished; otherwise it's an update.
     finished = fields.get("status") in (TraceStatus.SUCCESS, TraceStatus.FAILED)
     emit(
@@ -181,6 +203,27 @@ def list_traces(limit: int = 100, offset: int = 0) -> list[Trace]:
     if org_id is not None:
         query = query.filter(Trace.organization_id == org_id)
     return query.order_by(Trace.timestamp.desc()).limit(limit).offset(offset).all()
+
+
+def list_traces_page(page: int = 1, limit: int = 20) -> tuple[list[Trace], int]:
+    """Return a page of traces (most recent first) and the total matching count.
+
+    Tenant-scoped like :func:`list_traces`; used by the standardized paginated
+    ``GET /api/traces`` endpoint so it shares the ``{data, pagination}`` envelope
+    with every other collection endpoint.
+    """
+    query = Trace.query
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(Trace.organization_id == org_id)
+    total = query.count()
+    items = (
+        query.order_by(Trace.timestamp.desc())
+        .limit(limit)
+        .offset((page - 1) * limit)
+        .all()
+    )
+    return items, total
 
 
 def get_trace(trace_id: int) -> Optional[Trace]:
@@ -274,6 +317,8 @@ def create_agent_run(
     )
     db.session.add(run)
     _commit()
+    if not deferring():
+        invalidate_metrics_cache(run.organization_id)
     logger.debug("Started agent run id=%s name=%s request_id=%s", run.id, agent_name, request_id)
     emit(
         EventType.AGENT_STARTED,
@@ -298,6 +343,8 @@ def finish_agent_run(
     if metadata is not None:
         run.run_metadata = ensure_json_object(metadata, "metadata")
     _commit()
+    if not deferring():
+        invalidate_metrics_cache(run.organization_id)
     logger.debug("Finished agent run id=%s status=%s latency_ms=%s", run.id, status, run.latency_ms)
     emit(
         EventType.AGENT_FINISHED,
@@ -463,6 +510,8 @@ def create_retriever_trace(
     )
     db.session.add(retriever)
     _commit()
+    if not deferring():
+        invalidate_metrics_cache(retriever.organization_id)
     emit(
         EventType.RETRIEVER_FINISHED,
         retriever_id=retriever.id, step_id=step_id, num_documents=num_documents,
@@ -494,6 +543,7 @@ def update_retriever_trace(
     if retrieved_documents is not None:
         retriever.retrieved_documents = ensure_json_array(retrieved_documents, "retrieved_documents")
     db.session.commit()
+    invalidate_metrics_cache(retriever.organization_id)
     logger.debug(
         "Updated retriever trace id=%s num_documents=%s retrieval_time_ms=%s",
         retriever_trace_id, retriever.num_documents, retriever.retrieval_time_ms,

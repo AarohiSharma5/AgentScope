@@ -12,6 +12,17 @@ def _seed_trace(client, prompt="hello", model="gpt-4o"):
     return res.get_json()
 
 
+def test_list_traces_uses_shared_pagination_envelope(client):
+    """GET /api/traces returns the standard {data, pagination} envelope (M4)."""
+    for i in range(3):
+        _seed_trace(client, prompt=f"p{i}")
+
+    body = client.get("/api/traces?page=1&limit=2").get_json()
+    assert set(body) == {"data", "pagination"}
+    assert len(body["data"]) == 2
+    assert body["pagination"] == {"page": 1, "limit": 2, "total": 3, "pages": 2}
+
+
 # -- POST /api/agent-runs --------------------------------------------------
 
 
@@ -91,7 +102,7 @@ def test_ingest_agent_run_full_payload_linked_to_trace(client):
 
 
 def test_ingest_agent_run_without_request_id_creates_trace(client):
-    before = client.get("/api/traces").get_json()
+    before = client.get("/api/traces").get_json()["data"]
     payload = {
         "agent_name": "Chatbot",
         "model_name": "openai/gpt-oss-20b:free",
@@ -105,7 +116,7 @@ def test_ingest_agent_run_without_request_id_creates_trace(client):
     assert isinstance(body["request_id"], int)
 
     # A parent request trace was created and is visible in the request list.
-    after = client.get("/api/traces").get_json()
+    after = client.get("/api/traces").get_json()["data"]
     assert len(after) == len(before) + 1
     assert any(t["id"] == body["request_id"] for t in after)
 

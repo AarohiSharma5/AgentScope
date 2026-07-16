@@ -114,7 +114,11 @@ def ingest_agent_run(data: dict):
                 status=data.get("status", AgentStatus.SUCCESS),
                 latency_ms=_as_number(data.get("latency_ms"), "latency_ms"),
             )
+            org_id = run.organization_id
         db.session.commit()
+        # Per-row invalidation is skipped inside the deferred batch; do it once
+        # here now that the whole run is durably committed.
+        trace_service.invalidate_metrics_cache(org_id)
     except Exception:
         db.session.rollback()
         raise
@@ -166,7 +170,11 @@ def ingest_retrieval(data: dict):
                 latency_ms=_as_number(data.get("retrieval_time_ms"), "retrieval_time_ms"),
             )
             trace_service.finish_agent_run(run, status=AgentStatus.SUCCESS)
+            org_id = run.organization_id
         db.session.commit()
+        # Per-row invalidation is skipped inside the deferred batch; do it once
+        # here now that the whole retrieval is durably committed.
+        trace_service.invalidate_metrics_cache(org_id)
     except Exception:
         db.session.rollback()
         raise

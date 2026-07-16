@@ -29,6 +29,76 @@ def test_ttl_cache_hit_and_expiry():
     assert not hit
 
 
+def test_ttl_cache_evicts_least_recently_used_when_full():
+    cache = TTLCache(max_size=2)
+    cache.set("a", 1, ttl=10)
+    cache.set("b", 2, ttl=10)
+    # Touch "a" so "b" becomes the least-recently-used entry.
+    assert cache.get("a") == (True, 1)
+    cache.set("c", 3, ttl=10)  # overflow -> evict "b"
+    assert cache.get("b") == (False, None)
+    assert cache.get("a") == (True, 1)
+    assert cache.get("c") == (True, 3)
+
+
+def test_get_or_set_single_flights_concurrent_misses():
+    """Concurrent misses on one key compute exactly once (stampede protection)."""
+    import threading
+
+    cache = TTLCache()
+    calls = {"n": 0}
+    started = threading.Event()
+
+    def compute():
+        calls["n"] += 1
+        started.set()
+        time.sleep(0.05)  # hold the flight so others pile up on the key lock
+        return "value"
+
+    results = []
+
+    def worker():
+        results.append(cache.get_or_set("k", ttl=10, compute=compute))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert calls["n"] == 1  # only the flight leader ran compute
+    assert results == ["value"] * 8
+
+
+def test_ttl_cache_invalidate_by_predicate():
+    cache = TTLCache()
+    cache.set(("stats", (1,), ()), "a", ttl=10)
+    cache.set(("stats", (2,), ()), "b", ttl=10)
+    cache.set(("other", (1,), ()), "c", ttl=10)
+    dropped = cache.invalidate(lambda k: k[0] == "stats")
+    assert dropped == 2
+    assert cache.get(("stats", (1,), ())) == (False, None)
+    assert cache.get(("other", (1,), ())) == (True, "c")
+
+
+def test_cached_wrapper_invalidate(app):
+    calls = {"n": 0}
+
+    @cached(ttl=10)
+    def metric(org):
+        calls["n"] += 1
+        return org
+
+    with app.app_context():
+        clear_cache()
+        assert metric(1) == 1
+        assert metric(1) == 1
+        assert calls["n"] == 1  # cached
+        metric.invalidate(1)    # drop just org=1's entry
+        assert metric(1) == 1
+        assert calls["n"] == 2  # recomputed after invalidation
+
+
 def test_cached_decorator_memoizes_within_ttl(app):
     calls = {"n": 0}
 

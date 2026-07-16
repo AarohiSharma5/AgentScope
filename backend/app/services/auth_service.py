@@ -148,12 +148,25 @@ def get_organization(org_id: int) -> Optional[Organization]:
 
 
 def list_user_organizations(user: User) -> List[Organization]:
+    return _user_organizations_query(user).all()
+
+
+def _user_organizations_query(user: User):
     return (
         Organization.query.join(Membership, Membership.organization_id == Organization.id)
         .filter(Membership.user_id == user.id)
         .order_by(Organization.created_at.asc())
-        .all()
     )
+
+
+def list_user_organizations_page(
+    user: User, page: int, limit: int
+) -> Tuple[List[Organization], int]:
+    """Return a page of the user's organizations and the total count."""
+    query = _user_organizations_query(user)
+    total = query.count()
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
 
 
 def get_membership(user_id: int, org_id: int) -> Optional[Membership]:
@@ -162,6 +175,16 @@ def get_membership(user_id: int, org_id: int) -> Optional[Membership]:
 
 def list_members(org_id: int) -> List[Membership]:
     return Membership.query.filter_by(organization_id=org_id).all()
+
+
+def list_members_page(
+    org_id: int, page: int, limit: int
+) -> Tuple[List[Membership], int]:
+    """Return a bounded page of an organization's members and the total count."""
+    query = Membership.query.filter_by(organization_id=org_id).order_by(Membership.id.asc())
+    total = query.count()
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
 
 
 def add_member(org_id: int, email: str, role: str, actor_role: str) -> Membership:
@@ -272,11 +295,21 @@ def create_project(org_id: int, name: str) -> Project:
 
 
 def list_projects(org_id: int) -> List[Project]:
-    return (
-        Project.query.filter_by(organization_id=org_id)
-        .order_by(Project.created_at.asc())
-        .all()
-    )
+    return _projects_query(org_id).all()
+
+
+def _projects_query(org_id: int):
+    return Project.query.filter_by(organization_id=org_id).order_by(Project.created_at.asc())
+
+
+def list_projects_page(
+    org_id: int, page: int, limit: int
+) -> Tuple[List[Project], int]:
+    """Return a bounded page of an organization's projects and the total count."""
+    query = _projects_query(org_id)
+    total = query.count()
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
 
 
 # -- API keys ---------------------------------------------------------------
@@ -318,10 +351,24 @@ def create_api_key(
 
 
 def list_api_keys(org_id: int, project_id: Optional[int] = None) -> List[ApiKey]:
+    return _api_keys_query(org_id, project_id).all()
+
+
+def _api_keys_query(org_id: int, project_id: Optional[int] = None):
     query = ApiKey.query.filter_by(organization_id=org_id)
     if project_id is not None:
         query = query.filter_by(project_id=project_id)
-    return query.order_by(ApiKey.created_at.desc()).all()
+    return query.order_by(ApiKey.created_at.desc())
+
+
+def list_api_keys_page(
+    org_id: int, page: int, limit: int, project_id: Optional[int] = None
+) -> Tuple[List[ApiKey], int]:
+    """Return a bounded page of an organization's API keys and the total count."""
+    query = _api_keys_query(org_id, project_id)
+    total = query.count()
+    items = query.limit(limit).offset((page - 1) * limit).all()
+    return items, total
 
 
 def get_api_key(org_id: int, key_id: int) -> Optional[ApiKey]:

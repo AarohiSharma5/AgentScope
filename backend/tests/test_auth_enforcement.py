@@ -151,8 +151,9 @@ def test_auth_enforced_on_data_routes(tmp_path):
         ("limit=0", 400),
         ("limit=100000", 400),
         ("limit=abc", 400),
-        ("offset=-1", 400),
-        ("limit=10&offset=0", 200),
+        ("page=0", 400),
+        ("page=-1", 400),
+        ("page=1&limit=10", 200),
         ("", 200),
     ],
 )

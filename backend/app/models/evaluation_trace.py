@@ -116,8 +116,11 @@ class PromptVersion(db.Model):
 
     __tablename__ = "prompt_versions"
     __table_args__ = (
-        # Fetching a run's versions in version order is the hot path.
-        Index("ix_prompt_versions_run_version", "agent_run_id", "version"),
+        # One version label per run. Also serves the "fetch a run's versions in
+        # version order" hot path (a unique constraint is backed by an index),
+        # and prevents the concurrent ``v{count+1}`` race from persisting two
+        # rows with the same (agent_run_id, version).
+        db.UniqueConstraint("agent_run_id", "version", name="uq_prompt_versions_run_version"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

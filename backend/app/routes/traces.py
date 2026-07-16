@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 
 from ..errors import error_response
 from ..services import trace_service
+from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 traces_bp = Blueprint("traces", __name__)
 
@@ -18,26 +19,22 @@ def create_trace():
     return jsonify(trace.to_dict()), 201
 
 
-#: Upper bound on the number of traces a single list request may return, so a
-#: client cannot ask for an unbounded slice and exhaust server memory.
-MAX_TRACES_LIMIT = 500
-
-
 @traces_bp.get("/traces")
 def list_traces():
-    """List traces (most recent first) with simple, bounded pagination."""
-    try:
-        limit = int(request.args.get("limit", 100))
-        offset = int(request.args.get("offset", 0))
-    except (TypeError, ValueError):
-        return error_response("limit and offset must be integers", 400)
-    if not (1 <= limit <= MAX_TRACES_LIMIT):
-        return error_response(f"limit must be between 1 and {MAX_TRACES_LIMIT}", 400)
-    if offset < 0:
-        return error_response("offset must be >= 0", 400)
+    """List traces (most recent first) using the shared paginated envelope.
 
-    traces = trace_service.list_traces(limit=limit, offset=offset)
-    return jsonify([t.to_dict() for t in traces])
+    Standardized on ``page``/``limit`` + ``{data, pagination}`` so clients can
+    share one pagination/parse helper across every collection endpoint. ``limit``
+    is validated and bounded by :func:`parse_page_limit`, so a client can never
+    request an unbounded slice.
+    """
+    try:
+        page, limit = parse_page_limit(request.args)
+    except PaginationError as exc:
+        return error_response(str(exc), 400)
+
+    traces, total = trace_service.list_traces_page(page=page, limit=limit)
+    return jsonify(paginated([t.to_dict() for t in traces], page, limit, total))
 
 
 @traces_bp.get("/traces/<int:trace_id>")

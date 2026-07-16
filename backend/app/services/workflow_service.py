@@ -54,6 +54,17 @@ def _scoped(query, column):
     return query
 
 
+def invalidate_workflow_metrics_cache() -> None:
+    """Drop cached workflow aggregates after a workflow-affecting write.
+
+    Node/message rows are not org-stamped (their tenant is resolved by joining up
+    to the owning conversation), so rather than reconstruct the org per write we
+    drop the whole ``_workflow_metrics_for_org`` namespace. Workflow writes are
+    far rarer than dashboard reads, and this is a handful of dict removals.
+    """
+    _workflow_metrics_for_org.invalidate()
+
+
 def create_conversation_run(
     request_trace_id: int,
     conversation_name: Optional[str] = None,
@@ -72,6 +83,7 @@ def create_conversation_run(
     )
     db.session.add(conversation)
     db.session.commit()
+    invalidate_workflow_metrics_cache()
     logger.debug(
         "Started conversation run id=%s name=%s request_trace_id=%s",
         conversation.id, conversation_name, request_trace_id,
@@ -99,6 +111,7 @@ def finish_conversation_run(
     if metadata is not None:
         conversation.conversation_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
+    invalidate_workflow_metrics_cache()
     logger.debug(
         "Finished conversation run id=%s status=%s latency_ms=%s",
         conversation.id, status, conversation.latency_ms,
@@ -139,6 +152,7 @@ def create_agent_node(
     )
     db.session.add(node)
     db.session.commit()
+    invalidate_workflow_metrics_cache()
     logger.debug(
         "Created agent node id=%s role=%s conversation_run_id=%s parent=%s",
         node.id, agent_role, conversation_run_id, parent_node_id,
@@ -163,6 +177,7 @@ def update_agent_node(
     if metadata is not None:
         node.node_metadata = ensure_json_object(metadata, "metadata")
     db.session.commit()
+    invalidate_workflow_metrics_cache()
     return node
 
 
@@ -194,6 +209,7 @@ def create_agent_message(
     )
     db.session.add(message)
     db.session.commit()
+    invalidate_workflow_metrics_cache()
     logger.debug(
         "Recorded agent message id=%s type=%s sender=%s receiver=%s reply_to=%s",
         message.id, message_type, sender_node_id, receiver_node_id, reply_to_id,
