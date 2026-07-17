@@ -8,13 +8,23 @@ from app.services import trace_service
 from app.utils.timeutils import utcnow
 
 
-def _mk(model, prompt, status=TraceStatus.SUCCESS, response=None, ago_hours=0):
+def _mk(
+    model,
+    prompt,
+    status=TraceStatus.SUCCESS,
+    response=None,
+    ago_hours=0,
+    project=None,
+    system_prompt=None,
+):
     trace = trace_service.create_trace(
         {
             "model_name": model,
             "user_prompt": prompt,
             "final_response": response,
             "status": status,
+            "project": project,
+            "system_prompt": system_prompt,
         }
     )
     if ago_hours:
@@ -25,10 +35,23 @@ def _mk(model, prompt, status=TraceStatus.SUCCESS, response=None, ago_hours=0):
 
 def _seed(app):
     with app.app_context():
-        _mk("gpt-4o", "summarize the invoice", ago_hours=1)
-        _mk("gpt-4o", "translate to french", status=TraceStatus.FAILED, ago_hours=48)
-        _mk("claude-3-haiku", "write a poem about invoices", ago_hours=3)
-        _mk("gpt-4o-mini", "classify sentiment", response="totally positive", ago_hours=5)
+        _mk("gpt-4o", "summarize the invoice", ago_hours=1, project="billing-bot")
+        _mk(
+            "gpt-4o",
+            "translate to french",
+            status=TraceStatus.FAILED,
+            ago_hours=48,
+            project="billing-bot",
+        )
+        _mk("claude-3-haiku", "write a poem about invoices", ago_hours=3, project="content-gen")
+        # Untagged (no project) trace grouped by its system prompt instead.
+        _mk(
+            "gpt-4o-mini",
+            "classify sentiment",
+            response="totally positive",
+            ago_hours=5,
+            system_prompt="You are a sentiment classifier.",
+        )
 
 
 def test_filter_by_model(app, client):
@@ -98,3 +121,34 @@ def test_facets_lists_distinct_models(app, client):
     facets = client.get("/api/traces/facets").get_json()
     assert set(facets["models"]) == {"gpt-4o", "gpt-4o-mini", "claude-3-haiku"}
     assert facets["statuses"] == ["failed", "success"]
+
+
+def test_filter_by_project(app, client):
+    _seed(app)
+    res = client.get("/api/traces?project=billing-bot").get_json()
+    assert res["pagination"]["total"] == 2
+    assert all(t["project"] == "billing-bot" for t in res["data"])
+
+
+def test_filter_by_system_prompt_for_untagged(app, client):
+    _seed(app)
+    res = client.get(
+        "/api/traces?system_prompt=" + quote("You are a sentiment classifier.")
+    ).get_json()
+    assert res["pagination"]["total"] == 1
+    assert res["data"][0]["project"] is None
+    assert res["data"][0]["model_name"] == "gpt-4o-mini"
+
+
+def test_facets_areas_split_project_and_system_prompt(app, client):
+    _seed(app)
+    areas = client.get("/api/traces/facets").get_json()["areas"]
+    projects = {a["value"]: a for a in areas if a["type"] == "project"}
+    prompts = [a for a in areas if a["type"] == "system_prompt"]
+
+    assert projects["billing-bot"]["count"] == 2
+    assert projects["content-gen"]["count"] == 1
+    # The untagged trace shows up as a system-prompt area, not a project.
+    assert any(a["value"] == "You are a sentiment classifier." for a in prompts)
+    # Busiest area first.
+    assert areas[0]["value"] == "billing-bot"

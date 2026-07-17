@@ -32,7 +32,7 @@ from app import create_app
 from app.comparison import ModelComparisonEngine
 from app.evaluation import EvaluationEngine
 from app.extensions import db
-from app.models.agent_trace import AgentRun, AgentStatus, AgentStep
+from app.models.agent_trace import AgentRun, AgentStep
 from app.models.trace import Trace, TraceStatus
 from app.models.workflow_trace import ConversationRun
 from app.orchestration import AgentOrchestrator, ReplayEngine, WorkflowEngine
@@ -42,21 +42,46 @@ from app.utils.timeutils import utcnow
 # Deterministic output so repeated runs look the same.
 random.seed(1234)
 
-SYSTEM_PROMPT = "You are AgentScope, a precise and concise research assistant."
+# Applications / areas of concern. In a real company many surfaces share one
+# model, so teams organize by *area* — each with its own system prompt. These
+# make the "Application" filter on the Requests tab meaningful and demonstrable.
+AREAS = {
+    "revenue-analytics": (
+        "You are a financial research analyst. Answer using ONLY the retrieved "
+        "financial context and cite figures exactly."
+    ),
+    "code-assistant": (
+        "You are a senior software engineer. Write correct, idiomatic code and "
+        "briefly explain the trade-offs."
+    ),
+    "eng-education": (
+        "You are a patient staff engineer mentoring teammates. Explain concepts "
+        "clearly with practical examples."
+    ),
+    "customer-support": (
+        "You are a helpful, empathetic customer-support agent. Be concise, "
+        "professional and never make up account details."
+    ),
+}
 
-# Standalone request traces (the "Requests" tab). Models here all exist in the
-# backend price table, so cost is populated too.
+# The scenario Q&A below are all financial research, so they belong to one area.
+SCENARIO_PROJECT = "revenue-analytics"
+SYSTEM_PROMPT = AREAS[SCENARIO_PROJECT]
+
+# Standalone request traces (the "Requests" tab): (model, prompt, project). Models
+# here all exist in the backend price table, so cost is populated too, and each is
+# tagged with the application it belongs to.
 STANDALONE = [
-    ("gpt-4o", "Summarize the Q3 2026 earnings call in three bullets."),
-    ("gpt-4o-mini", "Write a Python function to deduplicate a list preserving order."),
-    ("claude-3-5-sonnet", "Explain the CAP theorem to a new backend engineer."),
-    ("gpt-4o", "Draft a polite follow-up email to a client who went quiet."),
-    ("gpt-3.5-turbo", "What are the trade-offs of microservices vs a monolith?"),
-    ("claude-3-haiku", "Give me three unit-test ideas for a rate limiter."),
-    ("gpt-4o-mini", "Convert this cron expression to plain English: */15 9-17 * * 1-5."),
-    ("gpt-4-turbo", "Outline a migration plan from SQLite to PostgreSQL."),
-    ("gpt-4o", "What changed between HTTP/1.1 and HTTP/2 for latency?"),
-    ("claude-3-5-sonnet", "Review this SQL for N+1 query risks and suggest indexes."),
+    ("gpt-4o", "Summarize the Q3 2026 earnings call in three bullets.", "revenue-analytics"),
+    ("gpt-4o-mini", "Write a Python function to deduplicate a list preserving order.", "code-assistant"),
+    ("claude-3-5-sonnet", "Explain the CAP theorem to a new backend engineer.", "eng-education"),
+    ("gpt-4o", "Draft a polite follow-up email to a client who went quiet.", "customer-support"),
+    ("gpt-3.5-turbo", "What are the trade-offs of microservices vs a monolith?", "eng-education"),
+    ("claude-3-haiku", "Give me three unit-test ideas for a rate limiter.", "code-assistant"),
+    ("gpt-4o-mini", "Convert this cron expression to plain English: */15 9-17 * * 1-5.", "code-assistant"),
+    ("gpt-4-turbo", "Outline a migration plan from SQLite to PostgreSQL.", "eng-education"),
+    ("gpt-4o", "What changed between HTTP/1.1 and HTTP/2 for latency?", "eng-education"),
+    ("claude-3-5-sonnet", "Review this SQL for N+1 query risks and suggest indexes.", "code-assistant"),
 ]
 
 # Rich Q&A scenarios -> each becomes a conversation with a full agent run,
@@ -106,14 +131,15 @@ ALT_MODELS = ["gpt-4o-mini", "claude-3-5-sonnet", "gpt-4-turbo"]
 def _seed_standalone_traces():
     """Flat request traces spread over the last ~12 days (the Requests tab)."""
     created = []
-    for i, (model, prompt) in enumerate(STANDALONE):
+    for i, (model, prompt, project) in enumerate(STANDALONE):
         input_tokens = random.randint(120, 900)
         output_tokens = random.randint(60, 700)
         status = TraceStatus.SUCCESS if random.random() > 0.15 else TraceStatus.FAILED
         trace = trace_service.create_trace(
             {
+                "project": project,
                 "user_prompt": prompt,
-                "system_prompt": SYSTEM_PROMPT,
+                "system_prompt": AREAS[project],
                 "model_name": model,
                 "latency_ms": round(random.uniform(220, 3800), 2),
                 "input_tokens": input_tokens,
@@ -145,6 +171,7 @@ def _build_scenario_conversation(model, question, answer, context, day_offset):
     output_tokens = random.randint(120, 400)
     trace = trace_service.create_trace(
         {
+            "project": SCENARIO_PROJECT,
             "user_prompt": question,
             "system_prompt": SYSTEM_PROMPT,
             "model_name": model,
@@ -346,6 +373,31 @@ def _rollup_parent_traces():
     return touched
 
 
+def _backfill_projects():
+    """Tag untagged request traces with an application/area (non-destructive).
+
+    New seeded traces are tagged at creation, but replay/workflow parents and any
+    previously seeded rows have no ``project``. Infer one from the prompt so the
+    "Application" filter is populated across all existing data: exact match on a
+    known standalone prompt, or a scenario question appearing in the prompt (which
+    also catches "replay of <question>" parents). Rows we can't classify are left
+    untagged and fall back to system-prompt grouping in the UI.
+    """
+    std_map = {prompt: project for (_m, prompt, project) in STANDALONE}
+    scenario_questions = [q for (q, *_rest) in SCENARIOS]
+    touched = 0
+    for trace in Trace.query.filter(Trace.project.is_(None)).all():
+        prompt = trace.user_prompt or ""
+        project = std_map.get(prompt)
+        if project is None and any(q in prompt for q in scenario_questions):
+            project = SCENARIO_PROJECT
+        if project:
+            trace.project = project
+            touched += 1
+    db.session.commit()
+    return touched
+
+
 def _spread_evaluation_dates(run_ids):
     """Backdate evaluation runs across the last week so Analytics has a series."""
     for offset, run_id in enumerate(run_ids):
@@ -419,6 +471,10 @@ def seed(reset: bool = False):
         # and spread their timestamps so the Requests feed looks like real traffic.
         _rollup_parent_traces()
 
+        # Tag any untagged parents (replays/workflows) with their application so
+        # the Requests "Application" filter is populated across everything.
+        _backfill_projects()
+
         # -- Summary ---------------------------------------------------------
         totals = {
             "traces (Requests)": Trace.query.count(),
@@ -454,7 +510,11 @@ def fixup():
     app = create_app()
     with app.app_context():
         touched = _rollup_parent_traces()
-        print(f"Tidied {touched} multi-agent parent request rows (no data added).")
+        tagged = _backfill_projects()
+        print(
+            f"Tidied {touched} multi-agent parent request rows and tagged "
+            f"{tagged} traces with an application (no data added)."
+        )
 
 
 if __name__ == "__main__":

@@ -4,9 +4,21 @@ import { fmtCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
 
 const COLUMNS = [
   {
+    key: "project",
+    header: "Application",
+    primary: true,
+    render: (t) =>
+      t.project ? (
+        <span className="rounded-md bg-accent/10 px-2 py-1 text-xs font-medium text-accent">
+          {t.project}
+        </span>
+      ) : (
+        <span className="text-xs text-gray-600">untagged</span>
+      ),
+  },
+  {
     key: "model_name",
     header: "Model",
-    primary: true,
     render: (t) => (
       <span className="rounded-md bg-ink-500 px-2 py-1 font-mono text-xs text-gray-300">
         {t.model_name}
@@ -57,7 +69,7 @@ export default function TracesTable({ traces }) {
       rows={traces}
       rowLink={(t) => `/traces/${t.id}`}
       rowLabel={(t) => `Open trace ${t.id} (${t.model_name})`}
-      minWidth="min-w-[720px]"
+      minWidth="min-w-[860px]"
       emptyMessage="No traces yet. Send an LLM request or run the seed script."
     />
   );

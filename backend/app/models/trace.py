@@ -18,14 +18,24 @@ class Trace(db.Model):
     __tablename__ = "traces"
 
     # Composite indexes for the hot list/dashboard query paths: newest-first
-    # listing (optionally filtered by status/model). These back the ORDER BY
-    # timestamp DESC + WHERE status/model queries without a full scan at scale.
+    # listing (optionally filtered by application/status/model). These back the
+    # ORDER BY timestamp DESC + WHERE project/status/model queries without a full
+    # scan at scale. ``project`` is the primary segmentation axis (see below), so
+    # it gets its own timestamp-composite index.
     __table_args__ = (
+        Index("ix_traces_project_timestamp", "project", "timestamp"),
         Index("ix_traces_status_timestamp", "status", "timestamp"),
         Index("ix_traces_model_timestamp", "model_name", "timestamp"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
+
+    # Application / area of concern this request belongs to (e.g. "refunds-bot",
+    # "revenue-analytics"). This is the axis teams actually organize around: many
+    # surfaces share one model, so segmenting by model is useless, whereas the
+    # owner of a surface wants to see only their surface. Optional and client-set;
+    # when absent the UI falls back to grouping by system_prompt.
+    project = db.Column(db.String(120), nullable=True)
 
     # Prompts & model
     user_prompt = db.Column(db.Text, nullable=True)
@@ -65,6 +75,7 @@ class Trace(db.Model):
         """Serialize the trace to a JSON-friendly dictionary."""
         return {
             "id": self.id,
+            "project": self.project,
             "user_prompt": self.user_prompt,
             "system_prompt": self.system_prompt,
             "model_name": self.model_name,

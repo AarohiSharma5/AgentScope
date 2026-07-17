@@ -55,7 +55,9 @@ def list_traces():
     is validated and bounded by :func:`parse_page_limit`, so a client can never
     request an unbounded slice.
 
-    Optional query params segment a high-volume list: ``model`` (exact),
+    Optional query params segment a high-volume list. The primary axis is the
+    application/area: ``project`` (the first-class tag) or ``system_prompt``
+    (exact, for untagged traffic). Secondary refinements: ``model`` (exact),
     ``status`` (``success``/``failed``), ``since``/``until`` (ISO datetime window),
     ``q`` (substring search over prompts/response) and ``sort``
     (``-timestamp`` newest-first, default, or ``timestamp``).
@@ -83,6 +85,8 @@ def list_traces():
     traces, total = trace_service.list_traces_page(
         page=page,
         limit=limit,
+        project=_clean(request.args.get("project")),
+        system_prompt=_clean(request.args.get("system_prompt")),
         model=_clean(request.args.get("model")),
         status=status,
         q=_clean(request.args.get("q")),
@@ -95,9 +99,14 @@ def list_traces():
 
 @traces_bp.get("/traces/facets")
 def trace_facets():
-    """Filter options for the Requests UI (distinct models + known statuses)."""
+    """Filter options for the Requests UI.
+
+    ``areas`` is the primary axis (applications/system-prompt areas); ``models``
+    and ``statuses`` are secondary refinements.
+    """
     return jsonify(
         {
+            "areas": trace_service.list_trace_areas(),
             "models": trace_service.distinct_trace_models(),
             "statuses": sorted(_TRACE_STATUSES),
         }

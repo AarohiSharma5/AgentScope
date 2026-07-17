@@ -135,6 +135,7 @@ def create_trace(data: dict) -> Trace:
         estimated_cost = estimate_cost(model_name, input_tokens, output_tokens)
 
     trace = Trace(
+        project=data.get("project"),
         user_prompt=data.get("user_prompt"),
         system_prompt=data.get("system_prompt"),
         model_name=model_name,
@@ -212,6 +213,8 @@ def list_traces(limit: int = 100, offset: int = 0) -> list[Trace]:
 def list_traces_page(
     page: int = 1,
     limit: int = 20,
+    project: Optional[str] = None,
+    system_prompt: Optional[str] = None,
     model: Optional[str] = None,
     status: Optional[str] = None,
     q: Optional[str] = None,
@@ -225,8 +228,11 @@ def list_traces_page(
     ``GET /api/traces`` endpoint so it shares the ``{data, pagination}`` envelope
     with every other collection endpoint.
 
-    Optional filters segment a high-volume firehose without a full scan: ``model``
-    and ``status`` are backed by the composite ``(model_name, timestamp)`` /
+    Optional filters segment a high-volume firehose without a full scan. The
+    primary axis is the application/area a request belongs to: ``project`` (the
+    first-class tag) or, for untagged traffic, ``system_prompt`` (exact match on
+    the prompt that defines an area). ``model`` and ``status`` are secondary
+    refinements backed by the composite ``(model_name, timestamp)`` /
     ``(status, timestamp)`` indexes, ``since``/``until`` bound the time window, and
     ``q`` is a case-insensitive substring search across the prompts and response.
     """
@@ -234,6 +240,10 @@ def list_traces_page(
     org_id = _tenant_scope()
     if org_id is not None:
         query = query.filter(Trace.organization_id == org_id)
+    if project:
+        query = query.filter(Trace.project == project)
+    if system_prompt:
+        query = query.filter(Trace.system_prompt == system_prompt)
     if model:
         query = query.filter(Trace.model_name == model)
     if status:
@@ -264,6 +274,49 @@ def distinct_trace_models() -> list[str]:
     if org_id is not None:
         query = query.filter(Trace.organization_id == org_id)
     return [m for (m,) in query.order_by(Trace.model_name.asc()).all() if m]
+
+
+def _short_label(text: str, limit: int = 72) -> str:
+    """One-line, length-bounded label for a (possibly long) system prompt."""
+    label = " ".join((text or "").split())
+    return label if len(label) <= limit else label[: limit - 1].rstrip() + "…"
+
+
+def list_trace_areas() -> list[dict]:
+    """The application/areas requests are grouped into, for the primary filter.
+
+    Returns a tenant-scoped, count-annotated list where each area is either an
+    explicit ``project`` tag or — for traffic with no project — a distinct
+    ``system_prompt`` (the artifact that de-facto defines an area today). Each
+    entry carries the ``type`` the caller passes back as a filter param
+    (``project`` or ``system_prompt``), the raw ``value`` to filter on, a
+    display ``label`` and the row ``count``. Ordered by count desc so the busiest
+    surfaces surface first.
+    """
+    org_id = _tenant_scope()
+
+    def _scope(query):
+        return query.filter(Trace.organization_id == org_id) if org_id is not None else query
+
+    projects = _scope(
+        db.session.query(Trace.project, func.count(Trace.id)).filter(Trace.project.isnot(None))
+    ).group_by(Trace.project).all()
+
+    system_prompts = _scope(
+        db.session.query(Trace.system_prompt, func.count(Trace.id)).filter(
+            Trace.project.is_(None), Trace.system_prompt.isnot(None)
+        )
+    ).group_by(Trace.system_prompt).all()
+
+    areas = [
+        {"type": "project", "value": value, "label": value, "count": count}
+        for value, count in projects
+    ] + [
+        {"type": "system_prompt", "value": value, "label": _short_label(value), "count": count}
+        for value, count in system_prompts
+    ]
+    areas.sort(key=lambda a: a["count"], reverse=True)
+    return areas
 
 
 def get_trace(trace_id: int) -> Optional[Trace]:

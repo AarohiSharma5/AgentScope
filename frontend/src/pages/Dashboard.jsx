@@ -24,14 +24,22 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [statsError, setStatsError] = useState(null);
   const [models, setModels] = useState([]);
+  const [areas, setAreas] = useState([]);
 
-  // Filters
+  // Filters — Application (area) is the primary axis; the rest refine within it.
+  const [areaIdx, setAreaIdx] = useState(""); // index into `areas`, "" = all
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [model, setModel] = useState("");
   const [status, setStatus] = useState("");
   const [sort, setSort] = useState("-timestamp");
   const [page, setPage] = useState(1);
+
+  const area = areaIdx === "" ? null : areas[Number(areaIdx)];
+  const projectParam = area?.type === "project" ? area.value : undefined;
+  const systemPromptParam = area?.type === "system_prompt" ? area.value : undefined;
+  const projectAreas = areas.filter((a) => a.type === "project");
+  const promptAreas = areas.filter((a) => a.type === "system_prompt");
 
   // List
   const [traces, setTraces] = useState([]);
@@ -42,7 +50,16 @@ export default function Dashboard() {
   // Global stats + filter facets load once.
   useEffect(() => {
     api.getStats().then(setStats).catch((e) => setStatsError(e.message));
-    api.getTraceFacets().then((f) => setModels(f.models || [])).catch(() => setModels([]));
+    api
+      .getTraceFacets()
+      .then((f) => {
+        setAreas(f.areas || []);
+        setModels(f.models || []);
+      })
+      .catch(() => {
+        setAreas([]);
+        setModels([]);
+      });
   }, []);
 
   // Debounce the free-text search and reset to page 1 on change.
@@ -61,7 +78,16 @@ export default function Dashboard() {
     setError(null);
     api
       .getTraces(
-        { page, limit: LIMIT, sort, q: query, model, status },
+        {
+          page,
+          limit: LIMIT,
+          sort,
+          q: query,
+          model,
+          status,
+          project: projectParam,
+          system_prompt: systemPromptParam,
+        },
         { signal: ctrl.signal }
       )
       .then((res) => {
@@ -75,14 +101,14 @@ export default function Dashboard() {
         if (!ctrl.signal.aborted) setLoading(false);
       });
     return () => ctrl.abort();
-  }, [page, sort, query, model, status]);
+  }, [page, sort, query, model, status, projectParam, systemPromptParam]);
 
   const resetFilter = (setter) => (e) => {
     setter(e.target.value);
     setPage(1);
   };
 
-  const hasFilters = query || model || status;
+  const hasFilters = query || model || status || area;
 
   return (
     <div className="space-y-8">
@@ -112,13 +138,41 @@ export default function Dashboard() {
           <span className="text-xs text-gray-500">{pagination.total} total</span>
         </div>
 
-        {/* Filter bar */}
+        {/* Filter bar — Application is the primary axis, the rest refine within it. */}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Search prompts & responses…"
-          />
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              aria-label="Filter by application / area"
+              value={areaIdx}
+              onChange={resetFilter(setAreaIdx)}
+              className={`${selectClass} sm:min-w-[16rem]`}
+            >
+              <option value="">All applications</option>
+              {projectAreas.length > 0 && (
+                <optgroup label="Applications">
+                  {projectAreas.map((a) => (
+                    <option key={`p-${a.value}`} value={String(areas.indexOf(a))}>
+                      {a.label} ({a.count})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {promptAreas.length > 0 && (
+                <optgroup label="Untagged — grouped by system prompt">
+                  {promptAreas.map((a) => (
+                    <option key={`s-${a.value}`} value={String(areas.indexOf(a))}>
+                      {a.label} ({a.count})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Search prompts & responses…"
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
               aria-label="Filter by model"
