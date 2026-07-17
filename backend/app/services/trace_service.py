@@ -209,25 +209,61 @@ def list_traces(limit: int = 100, offset: int = 0) -> list[Trace]:
     return query.order_by(Trace.timestamp.desc()).limit(limit).offset(offset).all()
 
 
-def list_traces_page(page: int = 1, limit: int = 20) -> tuple[list[Trace], int]:
-    """Return a page of traces (most recent first) and the total matching count.
+def list_traces_page(
+    page: int = 1,
+    limit: int = 20,
+    model: Optional[str] = None,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    sort: str = "-timestamp",
+) -> tuple[list[Trace], int]:
+    """Return a page of traces and the total matching count.
 
     Tenant-scoped like :func:`list_traces`; used by the standardized paginated
     ``GET /api/traces`` endpoint so it shares the ``{data, pagination}`` envelope
     with every other collection endpoint.
+
+    Optional filters segment a high-volume firehose without a full scan: ``model``
+    and ``status`` are backed by the composite ``(model_name, timestamp)`` /
+    ``(status, timestamp)`` indexes, ``since``/``until`` bound the time window, and
+    ``q`` is a case-insensitive substring search across the prompts and response.
     """
     query = Trace.query
     org_id = _tenant_scope()
     if org_id is not None:
         query = query.filter(Trace.organization_id == org_id)
+    if model:
+        query = query.filter(Trace.model_name == model)
+    if status:
+        query = query.filter(Trace.status == status)
+    if since is not None:
+        query = query.filter(Trace.timestamp >= since)
+    if until is not None:
+        query = query.filter(Trace.timestamp <= until)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                Trace.user_prompt.ilike(like),
+                Trace.system_prompt.ilike(like),
+                Trace.final_response.ilike(like),
+            )
+        )
     total = query.count()
-    items = (
-        query.order_by(Trace.timestamp.desc())
-        .limit(limit)
-        .offset((page - 1) * limit)
-        .all()
-    )
+    order = Trace.timestamp.asc() if sort == "timestamp" else Trace.timestamp.desc()
+    items = query.order_by(order).limit(limit).offset((page - 1) * limit).all()
     return items, total
+
+
+def distinct_trace_models() -> list[str]:
+    """Distinct model names seen in traces (tenant-scoped), for a filter dropdown."""
+    query = db.session.query(Trace.model_name).distinct()
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(Trace.organization_id == org_id)
+    return [m for (m,) in query.order_by(Trace.model_name.asc()).all() if m]
 
 
 def get_trace(trace_id: int) -> Optional[Trace]:
