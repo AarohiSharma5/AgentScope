@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EVENT_TYPES } from "./liveEvents.js";
 import { getAccessToken } from "../api/authStore.js";
+import { STREAM_URL } from "../api/config.js";
 
 // Generic Server-Sent Events subscription to the backend /api/stream endpoint.
 //
@@ -40,7 +41,7 @@ export function useEventStream({ topics = [], paused = false, onEvent }) {
     const token = getAccessToken();
     if (token) params.set("access_token", token);
     const query = params.toString();
-    const source = new EventSource(`/api/stream${query ? `?${query}` : ""}`);
+    const source = new EventSource(`${STREAM_URL}${query ? `?${query}` : ""}`);
 
     source.onopen = () => setStatus("open");
     source.onerror = () =>

@@ -19,8 +19,9 @@ import {
   getRefreshToken,
   setTokens,
 } from "./authStore.js";
+import { API_BASE } from "./config.js";
 
-const BASE = "/api";
+const BASE = API_BASE;
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_GET_RETRIES = 2; // up to 3 attempts total for GETs
 const RETRY_BASE_MS = 300;

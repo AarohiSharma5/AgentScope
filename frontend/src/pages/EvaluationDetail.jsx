@@ -119,7 +119,7 @@ export default function EvaluationDetail() {
 
             <Card className="p-5">
               <h3 className="mb-2 text-sm font-medium text-gray-200">Metric Radar</h3>
-              <RadarChart axes={radarAxes} />
+              <RadarChart axes={radarAxes} label="Metric radar" />
             </Card>
           </div>
 
@@ -142,7 +142,7 @@ export default function EvaluationDetail() {
                   Not enough evaluations of this conversation to chart a trend yet.
                 </p>
               ) : (
-                <LineChart data={historyPoints} format={fmtScore} />
+                <LineChart data={historyPoints} format={fmtScore} label="Score history over time" />
               )}
             </Card>
           </Section>

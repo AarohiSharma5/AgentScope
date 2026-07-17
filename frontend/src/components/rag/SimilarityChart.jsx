@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Card from "../ui/Card.jsx";
+import ChartFallbackTable from "../charts/ChartFallbackTable.jsx";
 import { fmtScore } from "../../lib/format.js";
 
 // Build `bins` histogram buckets across the observed score range.
@@ -56,19 +57,31 @@ function BarView({ documents, maxScore }) {
 function HistogramView({ scores }) {
   const buckets = histogram(scores);
   const maxCount = Math.max(...buckets.map((b) => b.count), 1);
+  const rows = buckets.map((b, i) => ({
+    key: i,
+    label: `${fmtScore(b.lo)}–${fmtScore(b.hi)}`,
+    value: b.count,
+  }));
   return (
-    <div className="flex items-end gap-2" style={{ height: 140 }}>
-      {buckets.map((b, i) => (
-        <div key={i} className="flex flex-1 flex-col items-center justify-end gap-1">
-          <span className="text-xs text-gray-400">{b.count || ""}</span>
-          <div
-            className="w-full rounded-t bg-accent/70"
-            style={{ height: `${(b.count / maxCount) * 100}%`, minHeight: b.count ? 4 : 0 }}
-          />
-          <span className="text-[10px] text-gray-600">{fmtScore(b.lo)}</span>
-        </div>
-      ))}
-    </div>
+    <figure className="m-0" role="group" aria-label="Similarity score distribution">
+      <div className="flex items-end gap-2" style={{ height: 140 }} aria-hidden="true">
+        {buckets.map((b, i) => (
+          <div key={i} className="flex flex-1 flex-col items-center justify-end gap-1">
+            <span className="text-xs text-gray-300">{b.count || ""}</span>
+            <div
+              className="w-full rounded-t bg-accent/70"
+              style={{ height: `${(b.count / maxCount) * 100}%`, minHeight: b.count ? 4 : 0 }}
+            />
+            <span className="text-[10px] text-gray-400">{fmtScore(b.lo)}</span>
+          </div>
+        ))}
+      </div>
+      <ChartFallbackTable
+        caption="Similarity score distribution"
+        columns={["Score range", "Count"]}
+        rows={rows}
+      />
+    </figure>
   );
 }
 

@@ -176,8 +176,12 @@ def update_trace(trace_id: int, **fields) -> Optional[Trace]:
     if trace is None:
         return None
 
+    # Write every field the caller passed, even falsy ones ("" or None), so a
+    # value like ``error_message`` or ``final_response`` can be explicitly
+    # cleared. Callers only include keys they intend to change (they omit the
+    # rest), so there is no "None means leave unchanged" convention to honor.
     for key, value in fields.items():
-        if value is not None and hasattr(trace, key):
+        if hasattr(trace, key):
             setattr(trace, key, value)
 
     if fields.get("total_tokens") is None and (

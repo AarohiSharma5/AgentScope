@@ -1,10 +1,13 @@
 // Reusable line chart (pure SVG, no dependencies).
 // data: [{ label, value }]. Renders a polyline with dots over a normalized grid.
+import ChartFallbackTable from "./ChartFallbackTable.jsx";
+
 export default function LineChart({
   data = [],
   format = (v) => (v == null ? "—" : String(v)),
   height = 160,
   emptyMessage = "No data to chart.",
+  label = "Line chart",
 }) {
   const points = data.filter((d) => d.value != null);
   if (points.length === 0) {
@@ -25,14 +28,19 @@ export default function LineChart({
     d,
   }));
   const path = coords.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+  const rows = points.map((d, i) => ({
+    key: d.label ?? i,
+    label: String(d.label ?? i),
+    value: format(d.value),
+  }));
 
   return (
-    <div style={{ height }}>
+    <figure className="m-0" role="group" aria-label={label} style={{ height }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
         className="h-full w-full"
-        role="img"
+        aria-hidden="true"
       >
         <polyline
           points={path}
@@ -55,10 +63,14 @@ export default function LineChart({
           </circle>
         ))}
       </svg>
-      <div className="mt-1 flex justify-between text-[10px] text-gray-600">
+      <div
+        className="mt-1 flex justify-between text-[10px] text-gray-400"
+        aria-hidden="true"
+      >
         <span>{points[0].label}</span>
         <span>{points[points.length - 1].label}</span>
       </div>
-    </div>
+      <ChartFallbackTable caption={label} rows={rows} />
+    </figure>
   );
 }

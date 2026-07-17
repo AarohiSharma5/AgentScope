@@ -1,4 +1,5 @@
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard.jsx";
 import TraceDetail from "./pages/TraceDetail.jsx";
 import AgentRuns from "./pages/AgentRuns.jsx";
@@ -92,8 +93,23 @@ export default function App() {
   // Show the login gate when the backend requires auth and we have no session.
   const showLoginGate = authRequired && status !== "authenticated";
 
+  // On each client-side navigation, move focus to the main region so keyboard
+  // and screen-reader users land on the new page's content instead of being
+  // stranded at the top of the (unchanged) header.
+  const location = useLocation();
+  const mainRef = useRef(null);
+  useEffect(() => {
+    mainRef.current?.focus();
+  }, [location.pathname]);
+
   return (
     <div className="min-h-full">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-20 focus:rounded-md focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-10 border-b border-ink-500 bg-ink-800/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-6">
@@ -141,7 +157,12 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main
+        id="main-content"
+        ref={mainRef}
+        tabIndex={-1}
+        className="mx-auto max-w-6xl px-6 py-8 focus:outline-none"
+      >
         {showLoginGate ? (
           <Login />
         ) : (

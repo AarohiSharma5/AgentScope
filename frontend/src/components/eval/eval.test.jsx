@@ -146,7 +146,9 @@ describe("charts", () => {
     const { rerender } = render(
       <BarChart data={[{ label: "Jul 1", value: 10 }]} format={(v) => `${v}`} />
     );
-    expect(screen.getByText("Jul 1")).toBeInTheDocument();
+    // The label appears both in the visual (aria-hidden) chart and the
+    // screen-reader data-table fallback.
+    expect(screen.getAllByText("Jul 1").length).toBeGreaterThanOrEqual(1);
     rerender(<BarChart data={[]} emptyMessage="Nothing" />);
     expect(screen.getByText("Nothing")).toBeInTheDocument();
   });

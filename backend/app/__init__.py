@@ -4,13 +4,14 @@ import logging
 import sqlite3
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, request
 from flask_cors import CORS
 from sqlalchemy import event
 
 from .config import Config
 from .errors import register_error_handlers
 from .extensions import db
+from .version import API_VERSION
 
 load_dotenv()
 
@@ -91,16 +92,33 @@ def _enable_sqlite_foreign_keys(app: Flask) -> None:
 # while still using any of these means JWTs are trivially forgeable.
 _DEFAULT_SECRETS = frozenset({None, "", "dev-secret-key", "change-me-in-production"})
 
-# Paths reachable without credentials even when AUTH_ENABLED is on: the health
-# probe and the endpoints used to *obtain* credentials in the first place.
-_AUTH_EXEMPT_PATHS = frozenset(
+# API prefixes the app answers on: the versioned contract and its unversioned
+# alias. Longest first so prefix stripping is unambiguous.
+_API_PREFIXES = ("/api/v1", "/api")
+
+# Suffixes (relative to an API prefix) reachable without credentials even when
+# AUTH_ENABLED is on: the metadata/health/docs endpoints and the endpoints used
+# to *obtain* credentials in the first place.
+_AUTH_EXEMPT_SUFFIXES = frozenset(
     {
-        "/api/health",
-        "/api/auth/register",
-        "/api/auth/login",
-        "/api/auth/refresh",
+        "/health",
+        "/version",
+        "/openapi.json",
+        "/docs",
+        "/auth/register",
+        "/auth/login",
+        "/auth/refresh",
     }
 )
+
+
+def _is_auth_exempt(path: str) -> bool:
+    """Whether ``path`` is a credential-free endpoint under any API prefix."""
+    for prefix in _API_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            if path[len(prefix):] in _AUTH_EXEMPT_SUFFIXES:
+                return True
+    return False
 
 
 def _verify_security_posture(app: Flask) -> None:
@@ -157,7 +175,7 @@ def _register_auth_enforcement(app: Flask) -> None:
         if request.method == "OPTIONS":
             return None  # let CORS preflight through
         path = request.path
-        if not path.startswith("/api/") or path in _AUTH_EXEMPT_PATHS:
+        if not path.startswith("/api/") or _is_auth_exempt(path):
             return None
         identity = resolve_identity()  # raises AuthError on invalid credentials
         if identity is None:
@@ -219,31 +237,46 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.auth import auth_bp
     from .routes.organizations import orgs_bp
     from .routes.jobs import jobs_bp
+    from .routes.meta import meta_bp
     from .middleware.logging import register_request_logging
     from .auth import register_auth_error_handlers
 
-    app.register_blueprint(traces_bp, url_prefix="/api")
-    app.register_blueprint(agent_traces_bp, url_prefix="/api")
-    app.register_blueprint(chat_bp, url_prefix="/api")
-    app.register_blueprint(rag_bp, url_prefix="/api")
-    app.register_blueprint(workflows_bp, url_prefix="/api")
-    app.register_blueprint(evaluations_bp, url_prefix="/api")
-    app.register_blueprint(stream_bp, url_prefix="/api")
-    app.register_blueprint(plugins_bp, url_prefix="/api")
-    app.register_blueprint(providers_bp, url_prefix="/api")
-    app.register_blueprint(exports_bp, url_prefix="/api")
-    app.register_blueprint(auth_bp, url_prefix="/api")
-    app.register_blueprint(orgs_bp, url_prefix="/api")
-    app.register_blueprint(jobs_bp, url_prefix="/api")
+    # Every API blueprint is mounted twice: under the versioned prefix
+    # ``/api/v1`` (the canonical, documented contract) and under the
+    # unversioned ``/api`` alias, which always maps to the current version so
+    # existing clients keep working. Registering the same blueprint under two
+    # prefixes requires a distinct ``name`` for the second mount.
+    api_blueprints = (
+        meta_bp,
+        traces_bp,
+        agent_traces_bp,
+        chat_bp,
+        rag_bp,
+        workflows_bp,
+        evaluations_bp,
+        stream_bp,
+        plugins_bp,
+        providers_bp,
+        exports_bp,
+        auth_bp,
+        orgs_bp,
+        jobs_bp,
+    )
+    for bp in api_blueprints:
+        app.register_blueprint(bp, url_prefix="/api")
+        app.register_blueprint(bp, url_prefix="/api/v1", name=f"{bp.name}_v1")
     _register_websocket(app)
     register_request_logging(app)
     _register_auth_enforcement(app)
     register_error_handlers(app)
     register_auth_error_handlers(app)
 
-    @app.get("/api/health")
-    def health():
-        return jsonify({"status": "ok", "service": "agentscope"})
+    @app.after_request
+    def _tag_api_version(response):
+        """Advertise the served API contract version on every /api response."""
+        if request.path.startswith("/api/"):
+            response.headers.setdefault("X-API-Version", API_VERSION)
+        return response
 
     _enable_sqlite_foreign_keys(app)
     # When migrations own the schema (USE_MIGRATIONS=true), the app must not

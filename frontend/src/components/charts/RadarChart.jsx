@@ -1,6 +1,8 @@
 // Reusable radar / spider chart (pure SVG). axes: [{ label, value }] with
 // values expected in the 0..1 range (clamped). Renders concentric rings, one
 // spoke per axis and the filled value polygon.
+import ChartFallbackTable from "./ChartFallbackTable.jsx";
+
 const SIZE = 220;
 const CENTER = SIZE / 2;
 const RADIUS = SIZE / 2 - 34;
@@ -12,7 +14,12 @@ function point(angle, radius) {
   ];
 }
 
-export default function RadarChart({ axes = [], emptyMessage = "No metrics to chart." }) {
+export default function RadarChart({
+  axes = [],
+  emptyMessage = "No metrics to chart.",
+  label = "Radar chart",
+  format = (v) => (v == null ? "—" : v.toFixed(2)),
+}) {
   const scored = axes.filter((a) => a.value != null);
   if (scored.length < 3) {
     return <p className="py-8 text-center text-sm text-gray-500">{emptyMessage}</p>;
@@ -28,9 +35,19 @@ export default function RadarChart({ axes = [], emptyMessage = "No metrics to ch
       return point(angleFor(i), RADIUS * v).map((c) => c.toFixed(1)).join(",");
     })
     .join(" ");
+  const rows = scored.map((a, i) => ({
+    key: a.label ?? i,
+    label: String(a.label ?? i),
+    value: format(a.value),
+  }));
 
   return (
-    <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="mx-auto h-64 w-64" role="img">
+    <figure className="m-0" role="group" aria-label={label}>
+    <svg
+      viewBox={`0 0 ${SIZE} ${SIZE}`}
+      className="mx-auto h-64 w-64"
+      aria-hidden="true"
+    >
       {rings.map((r) => (
         <polygon
           key={r}
@@ -59,7 +76,7 @@ export default function RadarChart({ axes = [], emptyMessage = "No metrics to ch
               y={ly}
               textAnchor="middle"
               dominantBaseline="middle"
-              className="fill-gray-500 text-[7px]"
+              className="fill-gray-300 text-[7px]"
             >
               {a.label}
             </text>
@@ -72,5 +89,7 @@ export default function RadarChart({ axes = [], emptyMessage = "No metrics to ch
         strokeWidth="1.5"
       />
     </svg>
+      <ChartFallbackTable caption={label} columns={["Metric", "Score"]} rows={rows} />
+    </figure>
   );
 }

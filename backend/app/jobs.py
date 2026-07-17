@@ -21,6 +21,7 @@ Design
 """
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import uuid
@@ -98,32 +99,44 @@ class JobManager:
         self._executor.submit(self._run, job, func, args, kwargs)
         return job
 
+    def _set(self, job: Job, **changes: Any) -> None:
+        """Apply job field updates atomically under the registry lock.
+
+        The status endpoint reads a job via :meth:`get`/:meth:`list` under the
+        same lock, so mutating multiple fields together here (e.g. ``result`` and
+        ``status``) guarantees readers never observe a torn, half-updated record.
+        """
+        with self._lock:
+            for key, value in changes.items():
+                setattr(job, key, value)
+
     def _run(self, job: Job, func: Callable, args: tuple, kwargs: dict) -> None:
-        job.status = "running"
-        job.started_at = utcnow().isoformat()
+        self._set(job, status="running", started_at=utcnow().isoformat())
         try:
             with self._app.app_context():  # type: ignore[union-attr]
                 try:
-                    job.result = func(*args, **kwargs)
+                    result = func(*args, **kwargs)
                 finally:
                     from .extensions import db
 
                     db.session.remove()
-            job.status = "succeeded"
+            self._set(job, result=result, status="succeeded")
         except Exception as exc:  # noqa: BLE001 - record failure, never crash worker
-            job.status = "failed"
-            job.error = str(exc)
+            self._set(job, status="failed", error=str(exc))
             logger.exception("background job %s (%s) failed", job.id, job.name)
         finally:
-            job.finished_at = utcnow().isoformat()
+            self._set(job, finished_at=utcnow().isoformat())
 
     def get(self, job_id: str) -> Optional[Job]:
+        # Return a snapshot copied under the lock so callers serialize a
+        # consistent point-in-time view even while the worker is updating it.
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+            return copy.copy(job) if job is not None else None
 
     def list(self) -> list[Job]:
         with self._lock:
-            return list(self._jobs.values())
+            return [copy.copy(job) for job in self._jobs.values()]
 
     def _evict_if_needed(self) -> None:
         if len(self._jobs) <= self._max_jobs:

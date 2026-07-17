@@ -82,19 +82,25 @@ export default function Analytics() {
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <ChartCard title="Daily Cost">
-            <BarChart data={daily.map((d) => ({ label: label(d), value: d.cost }))} format={fmtCost} />
+            <BarChart
+              data={daily.map((d) => ({ label: label(d), value: d.cost }))}
+              format={fmtCost}
+              label="Daily cost"
+            />
           </ChartCard>
           <ChartCard title="Daily Latency">
             <BarChart
               data={daily.map((d) => ({ label: label(d), value: d.latency_ms }))}
               format={fmtLatency}
               color="bg-sky-500/70"
+              label="Daily latency"
             />
           </ChartCard>
           <ChartCard title="Average Evaluation Score">
             <LineChart
               data={daily.map((d) => ({ label: label(d), value: d.evaluation_score }))}
               format={fmtScore}
+              label="Average evaluation score over time"
             />
           </ChartCard>
           <ChartCard title="Token Usage">
@@ -102,6 +108,7 @@ export default function Analytics() {
               data={daily.map((d) => ({ label: label(d), value: d.tokens }))}
               format={fmtNumber}
               color="bg-violet-500/70"
+              label="Daily token usage"
             />
           </ChartCard>
           <ChartCard title="Failure Rate">
@@ -109,6 +116,7 @@ export default function Analytics() {
               data={daily.map((d) => ({ label: label(d), value: d.failure_rate }))}
               format={pct}
               color="bg-rose-500/70"
+              label="Daily failure rate"
             />
           </ChartCard>
           <ChartCard title="Reliability" subtitle="tool success · memory usage">
@@ -122,6 +130,7 @@ export default function Analytics() {
               ]}
               format={fmtScore}
               color="bg-emerald-500/70"
+              label="Reliability metrics"
             />
           </ChartCard>
         </div>
