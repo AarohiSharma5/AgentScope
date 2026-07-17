@@ -217,6 +217,64 @@ def test_change_password_enforces_policy(client):
     assert weak.status_code == 400
 
 
+def test_change_password_happy_path(client):
+    """A valid change succeeds; the old password stops working and the new one works."""
+    body = _register(client, email="cp@acme.test", org="CP")
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "newpass456"},
+        headers=_auth_header(body["tokens"]),
+    )
+    assert resp.status_code == 200 and resp.get_json()["status"] == "ok"
+
+    # Old credentials rejected, new credentials accepted.
+    assert client.post(
+        "/api/auth/login", json={"email": "cp@acme.test", "password": "password123"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"email": "cp@acme.test", "password": "newpass456"}
+    ).status_code == 200
+
+
+def test_change_password_wrong_current_is_rejected(client):
+    body = _register(client, email="cpw@acme.test", org="CPW")
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "not-my-password", "new_password": "newpass456"},
+        headers=_auth_header(body["tokens"]),
+    )
+    assert resp.status_code == 400
+    # The password must be unchanged: the original still logs in.
+    assert client.post(
+        "/api/auth/login", json={"email": "cpw@acme.test", "password": "password123"}
+    ).status_code == 200
+
+
+def test_change_password_requires_authentication(client):
+    assert client.post(
+        "/api/auth/change-password",
+        json={"current_password": "x", "new_password": "newpass456"},
+    ).status_code == 401
+
+
+def test_change_password_forbidden_for_api_key(app):
+    """An API-key principal cannot change a user password (403)."""
+    from app.services import auth_service
+
+    with app.app_context():
+        user = auth_service.create_user(email="k@acme.test", password="password123")
+        org, _ = auth_service.create_organization("KeyOrg", user)
+        _, raw = auth_service.create_api_key(
+            org_id=org.id, name="k", role="admin", actor_role="admin"
+        )
+    resp = app.test_client().post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "newpass456"},
+        headers={"X-API-Key": raw},
+    )
+    assert resp.status_code == 403
+
+
 def test_ingest_endpoints_are_rate_limited(client, app):
     """Ingest routes (not just auth) are rate limited (S3)."""
     app.config["RATE_LIMIT_INGEST"] = "2/minute"

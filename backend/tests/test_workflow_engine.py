@@ -161,15 +161,32 @@ def test_parallel_execution_runs_branches_and_groups_them(app_ctx):
 
 
 def test_parallel_branches_run_concurrently(app_ctx):
-    engine = WorkflowEngine()
-    sleep_s = 0.2
+    """Prove the branches truly overlap without depending on wall-clock timing.
 
-    def slow(ctx):
-        time.sleep(sleep_s)
+    A ``threading.Barrier(3)`` only releases once all three branch handlers have
+    reached it *at the same time*. If the engine ran them serially, the first
+    ``wait()`` would block until the barrier's timeout and raise
+    ``BrokenBarrierError`` (failing the run). This is deterministic and immune to
+    slow/loaded CI runners — unlike an absolute or relative wall-clock threshold.
+    """
+    import threading
+
+    from flask import current_app
+
+    current_app.config["WORKFLOW_MAX_PARALLELISM"] = 3  # room for all three at once
+    engine = WorkflowEngine()
+
+    barrier = threading.Barrier(3, timeout=10)
+    arrivals = []
+
+    def branch(ctx):
+        # Blocks until all three branches arrive; times out only if they are not
+        # actually concurrent.
+        position = barrier.wait()
+        arrivals.append(position)
         return "done"
 
-    handlers = {"a": slow, "b": slow, "c": slow}
-
+    handlers = {"a": branch, "b": branch, "c": branch}
     parallel_spec = {
         "entry": "fanout",
         "nodes": {
@@ -180,43 +197,12 @@ def test_parallel_branches_run_concurrently(app_ctx):
             "done": {"type": "end"},
         },
     }
-    # Same three tasks, but chained so they must run one after another. Both
-    # workflows share the same per-node overhead, so comparing them cancels out
-    # runner speed — the only difference is that the parallel version overlaps
-    # the sleeps. This is far more robust than an absolute wall-clock threshold
-    # (which flakes on slow/loaded CI runners, e.g. Windows).
-    serial_spec = {
-        "entry": "a",
-        "nodes": {
-            "a": {"type": "task", "role": "a", "next": "b"},
-            "b": {"type": "task", "role": "b", "next": "c"},
-            "c": {"type": "task", "role": "c", "next": "done"},
-            "done": {"type": "end"},
-        },
-    }
 
-    # Warm up first: the very first engine.run pays one-time costs (lazy
-    # imports, thread-pool spin-up, first trace-record writes). Timing that
-    # cold-start run made the parallel case (which happened to run first) look
-    # no faster than the warm serial run and flaked on loaded CI runners. A
-    # throwaway run pays those costs so both measured runs are on equal footing.
-    assert engine.run(parallel_spec, handlers=handlers).ok
-    assert engine.run(serial_spec, handlers=handlers).ok
+    result = engine.run(parallel_spec, handlers=handlers)
 
-    started = time.perf_counter()
-    parallel_result = engine.run(parallel_spec, handlers=handlers)
-    parallel_elapsed = time.perf_counter() - started
-
-    started = time.perf_counter()
-    serial_result = engine.run(serial_spec, handlers=handlers)
-    serial_elapsed = time.perf_counter() - started
-
-    assert parallel_result.ok and serial_result.ok
-    # Concurrency must save real time: the parallel run overlaps the sleeps
-    # (~1x sleep_s) while the serial run pays for all three (~3x sleep_s). We
-    # require the parallel run to beat serial by at least one sleep interval,
-    # which the 2x sleep_s of overlap comfortably clears above scheduling noise.
-    assert parallel_elapsed < serial_elapsed - sleep_s
+    assert result.ok, "parallel branches did not run concurrently (barrier timed out)"
+    # All three passed the barrier exactly once, at distinct positions.
+    assert sorted(arrivals) == [0, 1, 2]
 
 
 # -- Conditional / branching / loops ---------------------------------------

@@ -174,11 +174,10 @@ jobs:
           alembic upgrade head
           alembic check
 
-      # Advisory: exercise the full suite against PostgreSQL to surface
-      # dialect/cascade/pooling differences. Not yet gating while any
-      # SQLite-only assumptions are ironed out.
-      - name: Run test suite against PostgreSQL (advisory)
-        continue-on-error: true
+      # Gating: exercise the full suite against PostgreSQL so dialect/cascade/
+      # pooling differences (and any SQLite-only assumptions) fail CI instead of
+      # reaching production. This proves parity, not just that migrations apply.
+      - name: Run test suite against PostgreSQL
         working-directory: backend
         env:
           TEST_DATABASE_URL: ${{ env.PG_DSN }}
