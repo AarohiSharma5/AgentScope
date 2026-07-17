@@ -1,7 +1,7 @@
 # Pinned to 3.12 to match CI (tests/release/SDK all target 3.12) and because
 # binary wheels (e.g. psycopg2-binary) exist for it — 3.14 has no cp314 wheel yet,
 # forcing a source build that fails in the slim image (no libpq/compiler).
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Avoid .pyc files and buffer flushing; keep logs immediate.
 ENV PYTHONDONTWRITEBYTECODE=1 \
