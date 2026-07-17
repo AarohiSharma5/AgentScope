@@ -66,14 +66,28 @@ def get_user_by_email(email: str) -> Optional[User]:
     return User.query.filter_by(email=(email or "").strip().lower()).first()
 
 
+def validate_password(password: str) -> None:
+    """Enforce the password policy, raising :class:`AuthServiceError` on failure.
+
+    Policy: at least ``PASSWORD_MIN_LENGTH`` characters (default 8) and a mix of
+    at least one letter and one digit, so trivially guessable passwords (all
+    digits, dictionary words) are rejected. Shared by registration and password
+    change so both apply the same rules.
+    """
+    min_len = int(current_app.config.get("PASSWORD_MIN_LENGTH", 8))
+    if not password or len(password) < min_len:
+        raise AuthServiceError(f"password must be at least {min_len} characters")
+    if not (re.search(r"[A-Za-z]", password) and re.search(r"\d", password)):
+        raise AuthServiceError("password must contain at least one letter and one number")
+
+
 def create_user(email: str, password: str, name: Optional[str] = None,
                 is_superadmin: bool = False) -> User:
     """Create a user with a securely hashed password."""
     email = (email or "").strip().lower()
     if not email or "@" not in email:
         raise AuthServiceError("a valid email is required")
-    if not password or len(password) < 8:
-        raise AuthServiceError("password must be at least 8 characters")
+    validate_password(password)
     if get_user_by_email(email) is not None:
         raise AuthServiceError("a user with this email already exists")
 

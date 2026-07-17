@@ -134,8 +134,10 @@ def change_password():
         return error_response("current password is incorrect", 400)
 
     new_password = body.get("new_password", "")
-    if len(new_password) < 8:
-        return error_response("new password must be at least 8 characters", 400)
+    try:
+        auth_service.validate_password(new_password)
+    except AuthServiceError as exc:
+        return error_response(str(exc), 400)
 
     user.set_password(new_password)
     db.session.commit()

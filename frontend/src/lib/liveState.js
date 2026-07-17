@@ -5,6 +5,12 @@
 const FEED_LIMIT = 60;
 const RUNNING = "running";
 
+// Finished conversations/agents are kept briefly for context, then evicted so a
+// long-lived Live session can't grow its maps without bound (a memory leak on a
+// page that is meant to stay open for hours). Running rows are never evicted.
+const FINISHED_TTL_MS = 5 * 60 * 1000; // drop finished rows older than 5 minutes
+const MAX_FINISHED_ROWS = 50; // and cap how many finished rows we retain (LRU)
+
 export const initialLiveState = {
   conversations: {}, // id -> { id, name, status, phase, latency_ms, updatedAt }
   agents: {}, // runId -> { id, name, type, status, parentRunId, requestId, latency_ms, updatedAt }
@@ -87,16 +93,46 @@ function applyEvent(state, event) {
       break;
   }
 
+  const nowMs = Date.parse(now) || Date.now();
   const feed = [{ ...event, timestamp: now }, ...state.feed].slice(0, FEED_LIMIT);
   return {
     ...state,
-    conversations,
-    agents,
+    conversations: evictFinished(conversations, nowMs),
+    agents: evictFinished(agents, nowMs),
     totals,
     seededEvaluations,
     feed,
     lastActivityAt: now,
   };
+}
+
+// Drop finished rows that are older than the TTL, then LRU-evict the oldest
+// finished rows beyond the cap. Running rows are always retained. Returns the
+// same map reference when nothing is evicted so selectors can memoize on it.
+function evictFinished(map, nowMs) {
+  const finished = [];
+  for (const key in map) {
+    if (map[key].status !== RUNNING) finished.push(key);
+  }
+  if (!finished.length) return map;
+
+  const ageOf = (key) => nowMs - (Date.parse(map[key].updatedAt) || nowMs);
+  const doomed = new Set(finished.filter((key) => ageOf(key) > FINISHED_TTL_MS));
+
+  const survivors = finished.filter((key) => !doomed.has(key));
+  if (survivors.length > MAX_FINISHED_ROWS) {
+    survivors.sort((a, b) => ageOf(b) - ageOf(a)); // oldest (largest age) first
+    for (let i = 0; i < survivors.length - MAX_FINISHED_ROWS; i += 1) {
+      doomed.add(survivors[i]);
+    }
+  }
+  if (!doomed.size) return map;
+
+  const next = {};
+  for (const key in map) {
+    if (!doomed.has(key)) next[key] = map[key];
+  }
+  return next;
 }
 
 export function liveReducer(state, action) {
@@ -150,12 +186,40 @@ export function selectAverageLatency(state) {
 }
 
 // Rows for the live tables, most-recently-updated first.
+//
+// Sorting the whole map on every event/render is wasteful: with a high event
+// rate these selectors run on each dispatch even when their slice of state did
+// not change. Because the reducer keeps the ``conversations``/``agents``
+// reference stable when a given event doesn't touch it, we memoize on that
+// reference and recompute only when it actually changes.
+function memoizeByMap(compute) {
+  let lastMap;
+  let lastResult;
+  return (map) => {
+    if (map !== lastMap) {
+      lastMap = map;
+      lastResult = compute(map);
+    }
+    return lastResult;
+  };
+}
+
+const conversationRowsOf = memoizeByMap((map) => Object.values(map).sort(byUpdatedDesc));
+const agentRowsOf = memoizeByMap((map) => Object.values(map).sort(byUpdatedDesc));
+
 export function selectConversationRows(state) {
-  return Object.values(state.conversations).sort(byUpdatedDesc);
+  return conversationRowsOf(state.conversations);
 }
 
 export function selectAgentRows(state) {
-  return Object.values(state.agents).sort(byUpdatedDesc);
+  return agentRowsOf(state.agents);
+}
+
+// Running-only rows for the "Running Agents" table (memoized on the full rows).
+const runningAgentRowsOf = memoizeByMap((rows) => rows.filter((a) => a.status === RUNNING));
+
+export function selectRunningAgentRows(state) {
+  return runningAgentRowsOf(selectAgentRows(state));
 }
 
 const byUpdatedDesc = (a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "");

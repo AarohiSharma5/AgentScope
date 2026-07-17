@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api/client.js";
 import ReplaysTable from "../components/eval/ReplaysTable.jsx";
 import SearchInput from "../components/SearchInput.jsx";
@@ -6,6 +6,7 @@ import Pagination from "../components/Pagination.jsx";
 import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
+import { usePaginatedList } from "../lib/usePaginatedList.js";
 
 const LIMIT = 20;
 
@@ -19,44 +20,21 @@ const SORT_OPTIONS = [
 ];
 
 export default function Replays() {
-  const [replays, setReplays] = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
-  const [page, setPage] = useState(1);
-  const [sort, setSort] = useState("-created_at");
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setQuery(search.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    api
-      .getReplays({ page, limit: LIMIT, sort, q: query }, { signal: ctrl.signal })
-      .then((res) => {
-        setReplays(res.data);
-        setPagination(res.pagination);
-      })
-      .catch((e) => {
-        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
-      })
-      .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
-      });
-    return () => ctrl.abort();
-  }, [page, sort, query, reloadKey]);
+  const {
+    data: replays,
+    pagination,
+    loading,
+    error,
+    setPage,
+    sort,
+    setSort,
+    search,
+    setSearch,
+    query,
+    reload,
+  } = usePaginatedList(api.getReplays, { limit: LIMIT });
 
   async function replayAgain(replay) {
     setBusyId(replay.id);
@@ -69,7 +47,7 @@ export default function Replays() {
         top_p: replay.top_p,
       });
       setNotice(`Replay #${created.id} created (${created.status}).`);
-      setReloadKey((k) => k + 1);
+      reload();
     } catch (e) {
       setNotice(`Failed to replay: ${e.message}`);
     } finally {
@@ -99,10 +77,7 @@ export default function Replays() {
           <select
             aria-label="Sort replays"
             value={sort}
-            onChange={(e) => {
-              setPage(1);
-              setSort(e.target.value);
-            }}
+            onChange={(e) => setSort(e.target.value)}
             className="rounded-lg border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-accent"
           >
             {SORT_OPTIONS.map((o) => (

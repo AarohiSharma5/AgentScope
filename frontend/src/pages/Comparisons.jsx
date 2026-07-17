@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api/client.js";
 import ComparisonCard from "../components/eval/ComparisonCard.jsx";
 import SearchInput from "../components/SearchInput.jsx";
@@ -8,6 +8,7 @@ import Section from "../components/ui/Section.jsx";
 import Loading from "../components/ui/Loading.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
+import { usePaginatedList } from "../lib/usePaginatedList.js";
 
 const LIMIT = 20;
 
@@ -94,45 +95,21 @@ function NewComparisonForm({ onCreated }) {
 }
 
 export default function Comparisons() {
-  const [comparisons, setComparisons] = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setQuery(search.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    api
-      .getComparisons({ page, limit: LIMIT, q: query }, { signal: ctrl.signal })
-      .then((res) => {
-        setComparisons(res.data);
-        setPagination(res.pagination);
-      })
-      .catch((e) => {
-        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
-      })
-      .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
-      });
-    return () => ctrl.abort();
-  }, [page, query, reloadKey]);
+  const {
+    data: comparisons,
+    pagination,
+    loading,
+    error,
+    setPage,
+    search,
+    setSearch,
+    query,
+    reload,
+  } = usePaginatedList(api.getComparisons, { limit: LIMIT, initialSort: null });
 
   const refresh = () => {
     setPage(1);
-    setReloadKey((k) => k + 1);
+    reload();
   };
 
   return (

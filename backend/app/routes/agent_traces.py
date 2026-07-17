@@ -12,6 +12,7 @@ Response conventions (shared across the v0.2 API):
 """
 from flask import Blueprint, jsonify, request
 
+from ..auth import rate_limited
 from ..errors import error_response, get_json_body
 from ..models.agent_trace import AgentStatus
 from ..serializers.agent import serialize_run_detail, serialize_run_summary
@@ -22,6 +23,7 @@ agent_traces_bp = Blueprint("agent_traces", __name__)
 
 
 @agent_traces_bp.post("/agent-runs")
+@rate_limited(config_key="RATE_LIMIT_INGEST")
 def create_agent_run():
     """Ingest a full agent run (steps, tool calls, memory, retrievals).
 

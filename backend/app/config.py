@@ -135,6 +135,21 @@ class Config:
     # API keys are minted with this human-readable prefix (e.g. ``as_...``).
     API_KEY_PREFIX = os.getenv("API_KEY_PREFIX", "as")
 
+    # Server-side pepper (secret salt) for API-key hashing. Keys are hashed with
+    # HMAC-SHA256 keyed by this value rather than a bare SHA-256, so a stolen
+    # ``key_hash`` column cannot be brute-forced/rainbow-tabled without also
+    # stealing the pepper (which lives in config/secrets, not the DB). Defaults
+    # to JWT_SECRET so a single strong secret peppers everything in dev; set a
+    # dedicated value in production if you rotate them independently.
+    API_KEY_PEPPER = os.getenv("API_KEY_PEPPER") or JWT_SECRET
+
+    # Password hashing. An explicit, tunable work factor (rather than relying on
+    # the library default) so cost can be raised over time. Werkzeug understands
+    # ``pbkdf2:sha256:<iterations>``; if ``argon2-cffi`` is installed you may set
+    # ``argon2`` for Argon2id. 600k PBKDF2 iterations follows OWASP guidance.
+    PASSWORD_HASH_METHOD = os.getenv("PASSWORD_HASH_METHOD", "pbkdf2:sha256:600000")
+    PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "8"))
+
     # Debounce window (seconds) for persisting ApiKey.last_used_at. Writing it on
     # every authenticated request causes write amplification / row-lock contention
     # on a hot key under ingest-heavy traffic; instead we persist at most once per
@@ -143,7 +158,17 @@ class Config:
         os.getenv("API_KEY_LAST_USED_DEBOUNCE_SECONDS", "60")
     )
 
-    # In-memory rate limiting (per process). Applied to auth endpoints and
-    # available as a decorator for any route.
+    # Rate limiting. In-process (per worker) by default; set
+    # ``RATE_LIMIT_STORAGE_URL`` to a Redis URL to share windows across workers
+    # so the configured limits hold cluster-wide instead of being multiplied by
+    # the worker count.
     RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
     RATE_LIMIT_DEFAULT = os.getenv("RATE_LIMIT_DEFAULT", "120/minute")
+    RATE_LIMIT_STORAGE_URL = os.getenv("RATE_LIMIT_STORAGE_URL") or None
+
+    # Per-surface limits so ingest/chat/import are protected too (not just auth).
+    # Ingest is high-throughput, so its default is generous; tighten per your
+    # traffic. Keyed per authenticated principal (or client IP when auth is off).
+    RATE_LIMIT_INGEST = os.getenv("RATE_LIMIT_INGEST", "1000/minute")
+    RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "240/minute")
+    RATE_LIMIT_IMPORT = os.getenv("RATE_LIMIT_IMPORT", "30/minute")

@@ -7,6 +7,7 @@ import Pagination from "../components/Pagination.jsx";
 import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
+import { usePaginatedList } from "../lib/usePaginatedList.js";
 import { fmtCost, fmtLatency, fmtNumber } from "../lib/format.js";
 
 const LIMIT = 20;
@@ -35,46 +36,23 @@ function MetricsOverview({ metrics }) {
 }
 
 export default function Workflows() {
-  const [workflows, setWorkflows] = useState([]);
   const [metrics, setMetrics] = useState(null);
-  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
-  const [page, setPage] = useState(1);
-  const [sort, setSort] = useState("-created_at");
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const {
+    data: workflows,
+    pagination,
+    loading,
+    error,
+    setPage,
+    sort,
+    setSort,
+    search,
+    setSearch,
+    query,
+  } = usePaginatedList(api.getWorkflows, { limit: LIMIT });
 
   useEffect(() => {
     api.getWorkflowMetrics().then(setMetrics).catch(() => setMetrics(null));
   }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setQuery(search.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    api
-      .getWorkflows({ page, limit: LIMIT, sort, q: query }, { signal: ctrl.signal })
-      .then((res) => {
-        setWorkflows(res.data);
-        setPagination(res.pagination);
-      })
-      .catch((e) => {
-        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
-      })
-      .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
-      });
-    return () => ctrl.abort();
-  }, [page, sort, query]);
 
   return (
     <div className="space-y-6">
@@ -98,10 +76,7 @@ export default function Workflows() {
           <select
             aria-label="Sort workflows"
             value={sort}
-            onChange={(e) => {
-              setPage(1);
-              setSort(e.target.value);
-            }}
+            onChange={(e) => setSort(e.target.value)}
             className="rounded-lg border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-accent"
           >
             {SORT_OPTIONS.map((o) => (

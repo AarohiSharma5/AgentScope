@@ -12,6 +12,7 @@ Response conventions (shared with the rest of the API):
 """
 from flask import Blueprint, jsonify, request
 
+from ..auth import rate_limited
 from ..errors import error_response, get_json_body
 from ..serializers.rag import (
     serialize_prompt_assembly,
@@ -25,6 +26,7 @@ rag_bp = Blueprint("rag", __name__)
 
 
 @rag_bp.post("/retrievals")
+@rate_limited(config_key="RATE_LIMIT_INGEST")
 def create_retrieval():
     """Ingest a single retrieval so it appears in the RAG Observatory.
 

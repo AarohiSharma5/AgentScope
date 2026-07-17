@@ -56,6 +56,21 @@ def _reset_schema(config_class) -> None:
         db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Isolate the process-wide rate limiter between tests.
+
+    The limiter is a process singleton; now that ingest/chat/import routes are
+    rate limited too, its counters would otherwise bleed across tests. Reset
+    around every test so limits are per-test and deterministic.
+    """
+    from app.auth.rate_limit import limiter
+
+    limiter.reset()
+    yield
+    limiter.reset()
+
+
 @pytest.fixture()
 def client(app):
     """Flask test client for API-level tests."""

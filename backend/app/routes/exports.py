@@ -131,7 +131,7 @@ def _read_upload() -> tuple[bytes, "Response | None"]:
 
 @exports_bp.post("/import")
 @require_admin
-@rate_limited()
+@rate_limited(config_key="RATE_LIMIT_IMPORT")
 def import_bundle():
     """Reconstruct an uploaded bundle (conversation/workflow) into the database."""
     data, err = _read_upload()
@@ -145,7 +145,7 @@ def import_bundle():
 
 @exports_bp.post("/import/inspect")
 @require_admin
-@rate_limited()
+@rate_limited(config_key="RATE_LIMIT_IMPORT")
 def import_inspect():
     """Parse and verify an uploaded bundle without writing anything."""
     data, err = _read_upload()
@@ -159,7 +159,7 @@ def import_inspect():
 
 @exports_bp.post("/import/replay")
 @require_admin
-@rate_limited()
+@rate_limited(config_key="RATE_LIMIT_IMPORT")
 def import_replay():
     """Import an exported conversation and replay it (optionally overriding params)."""
     data, err = _read_upload()

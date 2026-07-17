@@ -18,6 +18,7 @@ from .errors import (
     RateLimitError,
     register_auth_error_handlers,
 )
+from .rate_limit import configure_from_app as configure_rate_limiter
 from .rate_limit import limiter, rate_limited
 from .roles import Role, is_valid_role, role_satisfies
 
@@ -37,6 +38,7 @@ __all__ = [
     "RateLimitError",
     "register_auth_error_handlers",
     "rate_limited",
+    "configure_rate_limiter",
     "limiter",
     "Role",
     "is_valid_role",

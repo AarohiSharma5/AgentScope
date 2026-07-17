@@ -18,7 +18,7 @@ from ..models.auth import ApiKey, User
 from ..utils.timeutils import utcnow
 from . import tokens
 from .errors import AuthError, AuthzError
-from .keys import hash_key
+from .keys import candidate_hashes
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,9 @@ def _resolve_active_org(user: User) -> tuple[Optional[int], Optional[str]]:
 
 
 def _identity_from_api_key(raw: str) -> Identity:
-    key = ApiKey.query.filter_by(key_hash=hash_key(raw)).first()
+    # Match either the peppered HMAC (new keys) or the legacy bare SHA-256
+    # (keys minted before peppering), so existing keys keep working.
+    key = ApiKey.query.filter(ApiKey.key_hash.in_(candidate_hashes(raw))).first()
     if key is None or not key.is_valid():
         raise AuthError("invalid or revoked API key")
     _touch_last_used(key)

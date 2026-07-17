@@ -212,7 +212,7 @@ export const api = {
 
   // v0.1 — LLM request traces
   getStats: (opts) => request("/stats", opts),
-  getTraces: (opts) => request("/traces", opts),
+  getTraces: (params, opts) => request(`/traces${buildQuery(params)}`, opts),
   getTrace: (id, opts) => request(`/traces/${id}`, opts),
 
   // v0.2 — agent execution tracing

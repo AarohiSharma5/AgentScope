@@ -22,6 +22,22 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from ..extensions import db
 from ..utils.timeutils import utcnow
 
+# Used when hashing happens outside an app context (e.g. scripts/tests that build
+# a User directly); the app itself always supplies ``PASSWORD_HASH_METHOD``.
+_DEFAULT_PASSWORD_HASH_METHOD = "pbkdf2:sha256:600000"
+
+
+def _password_hash_method() -> str:
+    """The configured password-hash method, or a strong default off-context."""
+    try:
+        from flask import current_app, has_app_context
+
+        if has_app_context():
+            return current_app.config.get("PASSWORD_HASH_METHOD") or _DEFAULT_PASSWORD_HASH_METHOD
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return _DEFAULT_PASSWORD_HASH_METHOD
+
 
 class Organization(db.Model):
     """A tenant: the isolation boundary that owns projects, keys and members."""
@@ -75,11 +91,17 @@ class User(db.Model):
         cascade="all, delete-orphan", passive_deletes=True,
     )
 
-    # -- password handling (werkzeug pbkdf2:sha256; no extra dependency) -----
+    # -- password handling ---------------------------------------------------
 
     def set_password(self, password: str) -> None:
-        """Hash and store a password (never stored in plaintext)."""
-        self.password_hash = generate_password_hash(password, method="pbkdf2:sha256")
+        """Hash and store a password (never stored in plaintext).
+
+        The hashing method (and its work factor) comes from
+        ``PASSWORD_HASH_METHOD`` — an explicit, tunable ``pbkdf2:sha256:<iters>``
+        by default (or ``argon2`` when ``argon2-cffi`` is installed) — rather
+        than relying on the library default, so the cost can be raised over time.
+        """
+        self.password_hash = generate_password_hash(password, method=_password_hash_method())
 
     def check_password(self, password: str) -> bool:
         """Constant-time verification of a candidate password."""

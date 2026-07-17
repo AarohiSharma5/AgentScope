@@ -1,6 +1,7 @@
 """REST API endpoints for traces and dashboard stats."""
 from flask import Blueprint, jsonify, request
 
+from ..auth import rate_limited
 from ..errors import error_response, get_json_body
 from ..services import trace_service
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
@@ -9,6 +10,7 @@ traces_bp = Blueprint("traces", __name__)
 
 
 @traces_bp.post("/traces")
+@rate_limited(config_key="RATE_LIMIT_INGEST")
 def create_trace():
     """Ingest a new LLM request trace."""
     data = get_json_body()

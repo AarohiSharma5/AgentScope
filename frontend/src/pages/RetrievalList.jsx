@@ -7,6 +7,7 @@ import Pagination from "../components/Pagination.jsx";
 import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
+import { usePaginatedList } from "../lib/usePaginatedList.js";
 import { fmtCost, fmtLatency, fmtNumber, fmtScore } from "../lib/format.js";
 
 const LIMIT = 20;
@@ -40,48 +41,24 @@ function MetricsOverview({ metrics }) {
 }
 
 export default function RetrievalList() {
-  const [retrievals, setRetrievals] = useState([]);
   const [metrics, setMetrics] = useState(null);
-  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
-  const [page, setPage] = useState(1);
-  const [sort, setSort] = useState("-id");
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const {
+    data: retrievals,
+    pagination,
+    loading,
+    error,
+    setPage,
+    sort,
+    setSort,
+    search,
+    setSearch,
+    query,
+  } = usePaginatedList(api.getRetrievals, { limit: LIMIT, initialSort: "-id" });
 
   // Metrics overview loads once (independent of table paging/search).
   useEffect(() => {
     api.getRagMetrics().then(setMetrics).catch(() => setMetrics(null));
   }, []);
-
-  // Debounce search, resetting to page 1.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setQuery(search.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    api
-      .getRetrievals({ page, limit: LIMIT, sort, q: query }, { signal: ctrl.signal })
-      .then((res) => {
-        setRetrievals(res.data);
-        setPagination(res.pagination);
-      })
-      .catch((e) => {
-        if (e.name !== "AbortError" && !ctrl.signal.aborted) setError(e.message);
-      })
-      .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
-      });
-    return () => ctrl.abort();
-  }, [page, sort, query]);
 
   return (
     <div className="space-y-6">
@@ -105,10 +82,7 @@ export default function RetrievalList() {
           <select
             aria-label="Sort retrievals"
             value={sort}
-            onChange={(e) => {
-              setPage(1);
-              setSort(e.target.value);
-            }}
+            onChange={(e) => setSort(e.target.value)}
             className="rounded-lg border border-ink-500 bg-ink-800 px-3 py-2 text-sm text-gray-200 outline-none focus:border-accent"
           >
             {SORT_OPTIONS.map((o) => (

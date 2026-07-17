@@ -8,6 +8,7 @@ import {
   selectAverageLatency,
   selectConversationRows,
   selectCounts,
+  selectRunningAgentRows,
 } from "../../lib/liveState.js";
 import { describeEvent } from "../../lib/liveEvents.js";
 import ConnectionPill from "./ConnectionPill.jsx";
@@ -59,6 +60,31 @@ describe("liveReducer", () => {
     expect(selectCounts(s).runningEvaluations).toBe(3);
     s = feed(s, "evaluation.finished", { evaluation_run_id: 9, overall_score: 0.8 });
     expect(selectCounts(s).runningEvaluations).toBe(2);
+  });
+
+  it("evicts finished rows beyond the cap but keeps running ones (M9)", () => {
+    let s = initialLiveState;
+    s = feed(s, "agent.started", { run_id: 0, agent_name: "live" }); // stays running
+    // Finish many more agents than the retention cap (50).
+    for (let i = 1; i <= 60; i += 1) {
+      s = feed(s, "agent.finished", { run_id: i, agent_name: `a${i}`, status: "success" });
+    }
+    const rows = selectAgentRows(s);
+    const finished = rows.filter((r) => r.status !== "running");
+    const running = rows.filter((r) => r.status === "running");
+    expect(finished.length).toBe(50); // capped, not 60
+    expect(running).toHaveLength(1); // the running agent is never evicted
+  });
+
+  it("selectRunningAgentRows returns only running agents (M9)", () => {
+    let s = initialLiveState;
+    s = feed(s, "agent.started", { run_id: 1, agent_name: "A" });
+    s = feed(s, "agent.finished", { run_id: 2, agent_name: "B", status: "success" });
+    const running = selectRunningAgentRows(s);
+    expect(running).toHaveLength(1);
+    expect(running[0].id).toBe(1);
+    // Memoized: the same state returns the identical array reference.
+    expect(selectRunningAgentRows(s)).toBe(running);
   });
 
   it("clear keeps running rows and seeds but drops the feed", () => {

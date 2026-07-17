@@ -74,6 +74,10 @@ class JobManager:
     def init_app(self, app: Flask) -> None:
         """Bind to a Flask app and create the worker pool (idempotent)."""
         self._app = app
+        # Reclaim a pool from a previous init (e.g. a worker reload) so we don't
+        # leak its threads when replacing it.
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
         workers = int(app.config.get("BACKGROUND_WORKERS", 4)) or 1
         self._executor = ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="agentscope-job"

@@ -5,6 +5,7 @@ import {
   selectAverageLatency,
   selectConversationRows,
   selectCounts,
+  selectRunningAgentRows,
 } from "../lib/liveState.js";
 import { fmtCost, fmtLatency, fmtNumber } from "../lib/format.js";
 import Section from "../components/ui/Section.jsx";
@@ -54,7 +55,7 @@ export default function Live() {
   const counts = selectCounts(state);
   const conversationRows = selectConversationRows(state);
   const agentRows = selectAgentRows(state);
-  const runningAgents = agentRows.filter((a) => a.status === "running");
+  const runningAgents = selectRunningAgentRows(state);
   const avgLatency = selectAverageLatency(state);
 
   return (
@@ -125,8 +126,8 @@ export default function Live() {
         <Section title="Running Agents" count={runningAgents.length}>
           <LiveTable
             columns={AGENT_COLUMNS}
-            rows={agentRows}
-            empty="No agents yet — agent activity will appear here."
+            rows={runningAgents}
+            empty="No agents running — active agents will appear here."
           />
         </Section>
       </div>

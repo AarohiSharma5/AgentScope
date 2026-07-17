@@ -94,6 +94,48 @@ def test_api_key_hash_and_verify():
     assert not keys.verify_key(raw + "x", hashed)
 
 
+def test_api_key_hash_is_peppered_but_accepts_legacy(app):
+    """New keys are HMAC-peppered; the legacy bare SHA-256 still verifies (S1)."""
+    import hashlib
+
+    with app.app_context():
+        raw = keys.generate_key("as")
+        peppered = keys.hash_key(raw)
+        legacy = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        # The stored hash is no longer a bare SHA-256 of the key.
+        assert peppered != legacy
+        # Verification/lookup accepts both the new and the legacy digest.
+        assert keys.verify_key(raw, peppered)
+        assert keys.verify_key(raw, legacy)
+        assert set(keys.candidate_hashes(raw)) == {peppered, legacy}
+
+
+def test_legacy_sha256_api_key_still_authenticates(client, app):
+    """A key stored under the old bare-SHA-256 scheme keeps working (S1)."""
+    import hashlib
+
+    admin = _register(client, email="k@legacy.test", org="Legacy")
+    org_id = admin["organization"]["id"]
+    created = client.post(
+        f"/api/organizations/{org_id}/api-keys",
+        json={"name": "k", "role": Role.DEVELOPER},
+        headers=_auth_header(admin["tokens"]),
+    )
+    raw = created.get_json()["key"]
+    key_id = created.get_json()["id"]
+
+    # Rewrite the stored hash to the pre-pepper digest.
+    with app.app_context():
+        from app.extensions import db
+        from app.models.auth import ApiKey
+
+        key = db.session.get(ApiKey, key_id)
+        key.key_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        db.session.commit()
+
+    assert client.get("/api/auth/me", headers={"X-API-Key": raw}).status_code == 200
+
+
 def test_role_hierarchy():
     assert role_satisfies(Role.ADMIN, Role.VIEWER)
     assert role_satisfies(Role.DEVELOPER, Role.DEVELOPER)
@@ -134,6 +176,73 @@ def test_register_creates_user_org_and_admin(client):
     assert body["user"]["email"] == "admin@acme.test"
     assert body["membership"]["role"] == Role.ADMIN
     assert "access_token" in body["tokens"] and "refresh_token" in body["tokens"]
+
+
+def test_password_policy_rejects_weak_passwords(client):
+    """Registration enforces min length + letter/number mix (S2)."""
+    too_short = client.post(
+        "/api/auth/register",
+        json={"email": "a@a.test", "password": "short1", "organization_name": "X"},
+    )
+    assert too_short.status_code == 400
+
+    all_digits = client.post(
+        "/api/auth/register",
+        json={"email": "b@b.test", "password": "12345678", "organization_name": "X"},
+    )
+    assert all_digits.status_code == 400
+    assert "letter" in all_digits.get_json()["error"]
+
+
+def test_password_stored_with_explicit_work_factor(client, app):
+    """Passwords are hashed with the configured tunable pbkdf2 work factor (S2)."""
+    _register(client, email="h@h.test", org="H")
+    with app.app_context():
+        from app.models.auth import User
+
+        user = User.query.filter_by(email="h@h.test").first()
+        # e.g. "pbkdf2:sha256:600000$...": the iteration count is explicit, not implicit.
+        assert user.password_hash.startswith("pbkdf2:sha256:")
+        assert int(user.password_hash.split("$", 1)[0].split(":")[2]) >= 100000
+
+
+def test_change_password_enforces_policy(client):
+    """The change-password route applies the same policy (S2)."""
+    body = _register(client, email="pol@acme.test", org="Pol")
+    weak = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "1234567"},
+        headers=_auth_header(body["tokens"]),
+    )
+    assert weak.status_code == 400
+
+
+def test_ingest_endpoints_are_rate_limited(client, app):
+    """Ingest routes (not just auth) are rate limited (S3)."""
+    app.config["RATE_LIMIT_INGEST"] = "2/minute"
+    assert client.post("/api/traces", json={"model_name": "gpt-4o"}).status_code == 201
+    assert client.post("/api/traces", json={"model_name": "gpt-4o"}).status_code == 201
+    limited = client.post("/api/traces", json={"model_name": "gpt-4o"})
+    assert limited.status_code == 429
+    assert limited.headers.get("Retry-After") is not None
+
+
+def test_rate_limiter_store_is_pluggable():
+    """The limiter delegates to a swappable store (enables a shared backend) (S3)."""
+    from app.auth.rate_limit import InMemoryWindowStore, RateLimiter
+
+    rl = RateLimiter(store=InMemoryWindowStore())
+    assert rl.hit("k", 1, 60)[0] is True
+    allowed, retry_after = rl.hit("k", 1, 60)
+    assert allowed is False and retry_after >= 1
+
+
+def test_app_registers_coordinated_shutdown(app):
+    """The app exposes an idempotent, non-raising coordinated shutdown (S4)."""
+    shutdown = app.extensions.get("shutdown")
+    assert callable(shutdown)
+    shutdown()
+    shutdown()  # idempotent
 
 
 def test_register_duplicate_email_rejected(client):

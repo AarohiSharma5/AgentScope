@@ -10,6 +10,7 @@ import { fmtCost, fmtLatency, fmtNumber } from "../lib/format.js";
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [traces, setTraces] = useState([]);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -17,7 +18,8 @@ export default function Dashboard() {
     Promise.all([api.getStats(), api.getTraces()])
       .then(([s, t]) => {
         setStats(s);
-        setTraces(t);
+        setTraces(t.data);
+        setTotal(t.pagination?.total ?? t.data.length);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -43,7 +45,7 @@ export default function Dashboard() {
         <StatCard
           label="Success Rate"
           value={`${stats.success_rate}%`}
-          sublabel={`${traces.length} traces`}
+          sublabel={`${total} traces`}
         />
       </div>
 

@@ -1,4 +1,5 @@
 """Application factory for the AgentScope backend."""
+import atexit
 import logging
 import sqlite3
 
@@ -12,6 +13,50 @@ from .errors import register_error_handlers
 from .extensions import db
 
 load_dotenv()
+
+# Guards a single process-wide atexit registration across repeated create_app
+# calls (tests build many apps; the managers below are process singletons).
+_SHUTDOWN_ATEXIT_REGISTERED = False
+
+
+def _register_lifecycle_shutdown(app: Flask) -> None:
+    """Coordinate graceful teardown of the process-wide background managers.
+
+    The job manager, live-trace broadcaster and evaluation executors each own
+    threads that must be released when a worker exits or reloads; their
+    ``shutdown()`` methods existed but were never called. This registers a single
+    idempotent shutdown that closes all three, wires it to :mod:`atexit`
+    (covering normal interpreter/worker exit), and also exposes it as
+    ``app.extensions["shutdown"]`` so a gunicorn ``worker_exit`` hook can invoke
+    it explicitly for a hard, timely teardown.
+    """
+    global _SHUTDOWN_ATEXIT_REGISTERED
+
+    def _shutdown() -> None:
+        from .evaluation.engine import shutdown_all_engines
+        from .jobs import job_manager
+        from .streaming.manager import live_trace_manager
+
+        # At interpreter exit the logging streams may already be closed; don't let
+        # a teardown log line raise (or dump a spurious "Logging error").
+        logging.raiseExceptions = False
+
+        for name, fn in (
+            ("job manager", lambda: job_manager.shutdown(wait=False)),
+            ("live trace manager", live_trace_manager.shutdown),
+            ("evaluation executors", shutdown_all_engines),
+        ):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logging.getLogger("agentscope").exception(
+                    "error shutting down %s", name
+                )
+
+    app.extensions["shutdown"] = _shutdown
+    if not _SHUTDOWN_ATEXIT_REGISTERED:
+        atexit.register(_shutdown)
+        _SHUTDOWN_ATEXIT_REGISTERED = True
 
 
 def _configure_logging() -> None:
@@ -208,10 +253,15 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         with app.app_context():
             db.create_all()
 
+    from .auth import configure_rate_limiter
+    configure_rate_limiter(app)
+
     from .jobs import job_manager
     job_manager.init_app(app)
 
     from .plugins import init_plugins
     init_plugins(app)
+
+    _register_lifecycle_shutdown(app)
 
     return app

@@ -12,6 +12,7 @@ both synchronous (:meth:`EvaluationEngine.evaluate`) and asynchronous
 application context (the async worker re-enters the captured app context).
 """
 import logging
+import weakref
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Optional
 
@@ -23,6 +24,21 @@ from .context import MetricResult
 from .evaluators import Evaluator, LLMJudgeEvaluator, default_evaluators
 
 logger = logging.getLogger("agentscope")
+
+# Engines create their async executor lazily and ad hoc (there is no singleton),
+# so track any that spun one up in a weak set. This lets the app factory shut
+# every live evaluation executor down on worker exit without keeping engines
+# alive or leaking threads (see ``shutdown_all_engines``).
+_ENGINES_WITH_EXECUTORS: "weakref.WeakSet[EvaluationEngine]" = weakref.WeakSet()
+
+
+def shutdown_all_engines() -> None:
+    """Shut down the async executor of every engine that started one."""
+    for engine in list(_ENGINES_WITH_EXECUTORS):
+        try:
+            engine.shutdown()
+        except Exception:  # noqa: BLE001 - best-effort teardown, never raise
+            logger.exception("failed to shut down an evaluation engine executor")
 
 
 class EvaluationError(Exception):
@@ -184,6 +200,8 @@ class EvaluationEngine:
             self._executor = ThreadPoolExecutor(
                 max_workers=self._max_workers, thread_name_prefix="eval"
             )
+            # Track for coordinated shutdown on worker exit.
+            _ENGINES_WITH_EXECUTORS.add(self)
         return self._executor
 
     def shutdown(self) -> None:
