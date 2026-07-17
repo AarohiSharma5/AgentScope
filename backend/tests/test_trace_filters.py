@@ -33,15 +33,25 @@ def _mk(
     return trace
 
 
+BILLING_PROMPT = "You are a billing support agent. Never invent charges."
+
+
 def _seed(app):
     with app.app_context():
-        _mk("gpt-4o", "summarize the invoice", ago_hours=1, project="billing-bot")
+        _mk(
+            "gpt-4o",
+            "summarize the invoice",
+            ago_hours=1,
+            project="billing-bot",
+            system_prompt=BILLING_PROMPT,
+        )
         _mk(
             "gpt-4o",
             "translate to french",
             status=TraceStatus.FAILED,
             ago_hours=48,
             project="billing-bot",
+            system_prompt=BILLING_PROMPT,
         )
         _mk("claude-3-haiku", "write a poem about invoices", ago_hours=3, project="content-gen")
         # Untagged (no project) trace grouped by its system prompt instead.
@@ -148,7 +158,23 @@ def test_facets_areas_split_project_and_system_prompt(app, client):
 
     assert projects["billing-bot"]["count"] == 2
     assert projects["content-gen"]["count"] == 1
+    # Each application carries the system prompt that drives it.
+    assert projects["billing-bot"]["system_prompt"] == BILLING_PROMPT
+    assert projects["billing-bot"]["system_prompt_variants"] == 1
     # The untagged trace shows up as a system-prompt area, not a project.
     assert any(a["value"] == "You are a sentiment classifier." for a in prompts)
     # Busiest area first.
     assert areas[0]["value"] == "billing-bot"
+
+
+def test_area_reports_system_prompt_variants(app, client):
+    """A project using two different system prompts flags prompt drift."""
+    with app.app_context():
+        _mk("gpt-4o", "a", project="drifty", system_prompt="Prompt A")
+        _mk("gpt-4o", "b", project="drifty", system_prompt="Prompt A")
+        _mk("gpt-4o", "c", project="drifty", system_prompt="Prompt B")
+    areas = client.get("/api/traces/facets").get_json()["areas"]
+    drifty = next(a for a in areas if a["value"] == "drifty")
+    assert drifty["system_prompt_variants"] == 2
+    # The dominant prompt (used twice) is the representative one.
+    assert drifty["system_prompt"] == "Prompt A"

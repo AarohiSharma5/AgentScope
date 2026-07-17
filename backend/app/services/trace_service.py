@@ -287,20 +287,55 @@ def list_trace_areas() -> list[dict]:
 
     Returns a tenant-scoped, count-annotated list where each area is either an
     explicit ``project`` tag or — for traffic with no project — a distinct
-    ``system_prompt`` (the artifact that de-facto defines an area today). Each
-    entry carries the ``type`` the caller passes back as a filter param
-    (``project`` or ``system_prompt``), the raw ``value`` to filter on, a
-    display ``label`` and the row ``count``. Ordered by count desc so the busiest
-    surfaces surface first.
+    ``system_prompt`` (the artifact that de-facto defines an area today).
+
+    Crucially, every area carries the **system prompt that drives it**: an area
+    is really "an application and the system prompt behind it", which is what the
+    owner of a surface needs to see. For a ``project`` that is the most-used
+    system prompt among its traces (with ``system_prompt_variants`` counting how
+    many distinct prompts that project has, so prompt drift is visible); for a
+    system-prompt area it is the prompt itself.
+
+    Each entry carries the ``type`` the caller passes back as a filter param
+    (``project`` or ``system_prompt``), the raw ``value`` to filter on, a display
+    ``label``, the row ``count``, the ``system_prompt`` text and
+    ``system_prompt_variants``. Ordered by count desc so the busiest surfaces
+    surface first.
     """
     org_id = _tenant_scope()
 
     def _scope(query):
         return query.filter(Trace.organization_id == org_id) if org_id is not None else query
 
-    projects = _scope(
-        db.session.query(Trace.project, func.count(Trace.id)).filter(Trace.project.isnot(None))
-    ).group_by(Trace.project).all()
+    # (project, system_prompt) -> count, so we can both total per project and
+    # find the dominant system prompt (and detect prompt drift) in one query.
+    project_rows = _scope(
+        db.session.query(Trace.project, Trace.system_prompt, func.count(Trace.id)).filter(
+            Trace.project.isnot(None)
+        )
+    ).group_by(Trace.project, Trace.system_prompt).all()
+
+    per_project: dict[str, dict] = {}
+    for project, system_prompt, count in project_rows:
+        entry = per_project.setdefault(project, {"count": 0, "prompts": {}})
+        entry["count"] += count
+        if system_prompt:
+            entry["prompts"][system_prompt] = entry["prompts"].get(system_prompt, 0) + count
+
+    project_areas = []
+    for project, entry in per_project.items():
+        prompts = entry["prompts"]
+        top_prompt = max(prompts, key=prompts.get) if prompts else None
+        project_areas.append(
+            {
+                "type": "project",
+                "value": project,
+                "label": project,
+                "count": entry["count"],
+                "system_prompt": top_prompt,
+                "system_prompt_variants": len(prompts),
+            }
+        )
 
     system_prompts = _scope(
         db.session.query(Trace.system_prompt, func.count(Trace.id)).filter(
@@ -308,13 +343,19 @@ def list_trace_areas() -> list[dict]:
         )
     ).group_by(Trace.system_prompt).all()
 
-    areas = [
-        {"type": "project", "value": value, "label": value, "count": count}
-        for value, count in projects
-    ] + [
-        {"type": "system_prompt", "value": value, "label": _short_label(value), "count": count}
+    prompt_areas = [
+        {
+            "type": "system_prompt",
+            "value": value,
+            "label": _short_label(value),
+            "count": count,
+            "system_prompt": value,
+            "system_prompt_variants": 1,
+        }
         for value, count in system_prompts
     ]
+
+    areas = project_areas + prompt_areas
     areas.sort(key=lambda a: a["count"], reverse=True)
     return areas
 

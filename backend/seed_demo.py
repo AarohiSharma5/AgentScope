@@ -374,25 +374,41 @@ def _rollup_parent_traces():
 
 
 def _backfill_projects():
-    """Tag untagged request traces with an application/area (non-destructive).
+    """Tag request traces with an application/area + its system prompt (idempotent).
 
     New seeded traces are tagged at creation, but replay/workflow parents and any
     previously seeded rows have no ``project``. Infer one from the prompt so the
     "Application" filter is populated across all existing data: exact match on a
     known standalone prompt, or a scenario question appearing in the prompt (which
-    also catches "replay of <question>" parents). Rows we can't classify are left
-    untagged and fall back to system-prompt grouping in the UI.
+    also catches "replay of <question>" parents).
+
+    Because an area is really "an application *and the system prompt behind it*",
+    for every trace mapped to a known :data:`AREAS` application we also align its
+    ``system_prompt`` to that application's prompt — so each application shows a
+    distinct prompt instead of one generic default. Only rows classified into a
+    known area are touched; a user's own captured traces (unknown prompts) are
+    left untouched and fall back to system-prompt grouping in the UI.
     """
     std_map = {prompt: project for (_m, prompt, project) in STANDALONE}
     scenario_questions = [q for (q, *_rest) in SCENARIOS]
     touched = 0
-    for trace in Trace.query.filter(Trace.project.is_(None)).all():
-        prompt = trace.user_prompt or ""
-        project = std_map.get(prompt)
-        if project is None and any(q in prompt for q in scenario_questions):
-            project = SCENARIO_PROJECT
-        if project:
+    for trace in Trace.query.all():
+        project = trace.project
+        if project is None:
+            prompt = trace.user_prompt or ""
+            project = std_map.get(prompt)
+            if project is None and any(q in prompt for q in scenario_questions):
+                project = SCENARIO_PROJECT
+        if not project or project not in AREAS:
+            continue
+        changed = False
+        if trace.project != project:
             trace.project = project
+            changed = True
+        if trace.system_prompt != AREAS[project]:
+            trace.system_prompt = AREAS[project]
+            changed = True
+        if changed:
             touched += 1
     db.session.commit()
     return touched
