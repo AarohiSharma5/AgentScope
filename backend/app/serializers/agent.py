@@ -80,11 +80,19 @@ def serialize_step(step: AgentStep) -> dict:
 
 
 def serialize_run_summary(run: AgentRun) -> dict:
-    """Lightweight run representation for list endpoints."""
+    """Lightweight run representation for list endpoints.
+
+    ``project`` / ``system_prompt`` are inherited from the parent request trace
+    (the run's application/area), so a run row can show and be filtered by the
+    surface it belongs to. ``run.request`` is eager-loaded by the list query.
+    """
+    trace = run.request
     return {
         "id": run.id,
         "request_id": run.request_id,
         "parent_run_id": run.parent_run_id,
+        "project": trace.project if trace else None,
+        "system_prompt": trace.system_prompt if trace else None,
         "agent_name": run.agent_name,
         "agent_type": run.agent_type,
         "status": run.status,

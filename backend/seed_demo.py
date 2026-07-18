@@ -127,6 +127,30 @@ SCENARIOS = [
 
 ALT_MODELS = ["gpt-4o-mini", "claude-3-5-sonnet", "gpt-4-turbo"]
 
+# Multi-step agent runs that live in applications *other* than revenue-analytics,
+# so the Agent Runs tab is segmentable by application too (not just one area).
+# (project, model, question, answer)
+AGENT_RUN_SCENARIOS = [
+    (
+        "code-assistant",
+        "gpt-4o-mini",
+        "Refactor this O(n^2) lookup to be linear.",
+        "Build a set once, then membership tests are O(1) — overall O(n).",
+    ),
+    (
+        "code-assistant",
+        "claude-3-5-sonnet",
+        "Find the race condition in this counter increment.",
+        "The read-modify-write on `count` isn't atomic; guard it with a lock.",
+    ),
+    (
+        "customer-support",
+        "gpt-4o",
+        "Customer can't reset their password — outline the next steps.",
+        "1) Verify identity, 2) trigger a reset email, 3) confirm inbox receipt.",
+    ),
+]
+
 
 def _seed_standalone_traces():
     """Flat request traces spread over the last ~12 days (the Requests tab)."""
@@ -249,6 +273,76 @@ def _build_scenario_conversation(model, question, answer, context, day_offset):
     db.session.commit()
 
     return orch.conversation.id, researcher.run.id
+
+
+def _build_area_agent_run(project, model, question, answer):
+    """A small multi-step agent run in a given application (idempotent).
+
+    Creates the parent request trace (tagged with ``project`` and its system
+    prompt) plus a two-step agent run (reasoning + answer) so the Agent Runs tab
+    has runs spread across several applications. Skips creation if a trace with
+    the same project + prompt already exists, so ``--agent-areas`` can be re-run.
+    """
+    existing = Trace.query.filter_by(project=project, user_prompt=question).first()
+    if existing is not None:
+        return False
+
+    input_tokens = random.randint(160, 420)
+    output_tokens = random.randint(80, 320)
+    trace = trace_service.create_trace(
+        {
+            "project": project,
+            "user_prompt": question,
+            "system_prompt": AREAS[project],
+            "model_name": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": round(random.uniform(300, 2200), 2),
+            "final_response": answer,
+        }
+    )
+
+    orch = AgentOrchestrator(request_trace_id=trace.id, conversation_name=question[:40])
+    agent = orch.create_agent("Assistant", role=project)
+
+    def work():
+        rec, run = orch.recorder, agent.run
+        rec.record_prompt_assembly(
+            run, system_prompt=AREAS[project], user_prompt=question
+        )
+        plan = rec.add_step(run, step_type="reasoning", name="Analyze request", input=question)
+        rec.finish_step(plan, output="Identified the approach and constraints.")
+        llm = rec.add_step(run, step_type="llm", name="Compose answer", input=question)
+        rec.finish_step(
+            llm,
+            output=answer,
+            token_usage={
+                "input": input_tokens,
+                "output": output_tokens,
+                "total": input_tokens + output_tokens,
+            },
+            cost=trace_service.estimate_cost(model, input_tokens, output_tokens),
+        )
+        return answer
+
+    agent.execute(work=work)
+    orch.finish()
+
+    when = utcnow() - timedelta(days=random.randint(0, 10), hours=random.randint(0, 23))
+    orch.conversation.created_at = when
+    orch.conversation.started_at = when
+    trace.timestamp = when
+    db.session.commit()
+    return True
+
+
+def _seed_area_agent_runs():
+    """Create agent runs across non-analytics applications (idempotent)."""
+    created = 0
+    for project, model, question, answer in AGENT_RUN_SCENARIOS:
+        if _build_area_agent_run(project, model, question, answer):
+            created += 1
+    return created
 
 
 def _seed_workflows():
@@ -390,14 +484,23 @@ def _backfill_projects():
     left untouched and fall back to system-prompt grouping in the UI.
     """
     std_map = {prompt: project for (_m, prompt, project) in STANDALONE}
-    scenario_questions = [q for (q, *_rest) in SCENARIOS]
+    # Match on the 40-char conversation-name prefix, because replay parents store
+    # a truncated "replay of <question[:40]>" prompt — the full question is never
+    # a substring of it. This is what previously left replay rows untagged.
+    scenario_prefixes = [q[:40] for (q, *_rest) in SCENARIOS]
     touched = 0
     for trace in Trace.query.all():
         project = trace.project
         if project is None:
             prompt = trace.user_prompt or ""
             project = std_map.get(prompt)
-            if project is None and any(q in prompt for q in scenario_questions):
+            if project is None and any(pref in prompt for pref in scenario_prefixes):
+                project = SCENARIO_PROJECT
+            # Remaining multi-agent parents (replays / the research-digest
+            # workflow execution) are all research/analytics work in this demo,
+            # and — like any agent run — are driven by a system prompt, so give
+            # them the analytics area rather than leaving them prompt-less.
+            if project is None and trace.model_name == "multi-agent":
                 project = SCENARIO_PROJECT
         if not project or project not in AREAS:
             continue
@@ -440,6 +543,9 @@ def seed(reset: bool = False):
             conversations.append(
                 _build_scenario_conversation(model, question, answer, context, day_offset=i)
             )
+
+        # 2b) Agent runs in other applications so Agent Runs spans >1 area.
+        area_runs = _seed_area_agent_runs()
 
         # 4) Workflows (+ their executions/conversations).
         definitions = _seed_workflows()
@@ -495,6 +601,7 @@ def seed(reset: bool = False):
         totals = {
             "traces (Requests)": Trace.query.count(),
             "standalone traces added": len(standalone),
+            "area agent runs added": area_runs,
             "scenario conversations": len(conversations),
             "workflow definitions": len(definitions),
             "replays": replay_count,
@@ -533,8 +640,23 @@ def fixup():
         )
 
 
+def agent_areas():
+    """Non-destructive: append agent runs across non-analytics applications.
+
+    Use this to give an already-seeded database agent runs in more than one
+    application (so the Agent Runs "Application" filter is demonstrable) without
+    dropping anything. Idempotent — re-running adds nothing new.
+    """
+    app = create_app()
+    with app.app_context():
+        created = _seed_area_agent_runs()
+        print(f"Added {created} agent run(s) across non-analytics applications.")
+
+
 if __name__ == "__main__":
     if "--fixup" in sys.argv:
         fixup()
+    elif "--agent-areas" in sys.argv:
+        agent_areas()
     else:
         seed(reset="--reset" in sys.argv)

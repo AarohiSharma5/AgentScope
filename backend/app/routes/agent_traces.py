@@ -66,10 +66,39 @@ def list_agent_runs():
             },
         )
 
+    project = request.args.get("project")
+    if project is not None:
+        project = project.strip() or None
+    system_prompt = request.args.get("system_prompt")
+    if system_prompt is not None:
+        system_prompt = system_prompt.strip() or None
+
     items, total = trace_service.list_agent_runs(
-        page=page, limit=limit, status=status, agent_type=agent_type, sort=sort, q=q
+        page=page,
+        limit=limit,
+        status=status,
+        agent_type=agent_type,
+        sort=sort,
+        q=q,
+        project=project,
+        system_prompt=system_prompt,
     )
     return jsonify(paginated([serialize_run_summary(r) for r in items], page, limit, total))
+
+
+@agent_traces_bp.get("/agent-runs/facets")
+def agent_run_facets():
+    """Filter options for the Agent Runs UI.
+
+    ``areas`` (applications / system-prompt areas the runs belong to) is the
+    primary axis; ``statuses`` are the secondary refinement.
+    """
+    return jsonify(
+        {
+            "areas": trace_service.list_agent_run_areas(),
+            "statuses": sorted(AgentStatus.ALL),
+        }
+    )
 
 
 @agent_traces_bp.get("/agent-runs/<int:run_id>")

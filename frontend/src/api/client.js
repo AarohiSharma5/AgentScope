@@ -219,6 +219,7 @@ export const api = {
 
   // v0.2 — agent execution tracing
   getAgentRuns: (params, opts) => request(`/agent-runs${buildQuery(params)}`, opts),
+  getAgentRunFacets: (opts) => request("/agent-runs/facets", opts),
   getAgentRun: (id, opts) => request(`/agent-runs/${id}`, opts),
   getRequestAgentRuns: (requestId, opts) =>
     request(`/requests/${requestId}/agent-runs`, opts),

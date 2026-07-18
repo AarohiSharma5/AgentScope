@@ -13,6 +13,18 @@ const COLUMNS = [
   },
   { key: "agent_name", header: "Agent", className: "font-medium text-gray-200" },
   {
+    key: "project",
+    header: "Application",
+    render: (r) =>
+      r.project ? (
+        <span className="rounded-md bg-accent/10 px-2 py-1 text-xs font-medium text-accent">
+          {r.project}
+        </span>
+      ) : (
+        <span className="text-xs text-gray-600">untagged</span>
+      ),
+  },
+  {
     key: "agent_type",
     header: "Type",
     render: (r) =>
@@ -59,7 +71,7 @@ export default function AgentRunsTable({ runs }) {
       rows={runs}
       rowLink={(r) => `/agent-runs/${r.id}`}
       rowLabel={(r) => `Open agent run ${r.id} (${r.agent_name})`}
-      minWidth="min-w-[720px]"
+      minWidth="min-w-[860px]"
     />
   );
 }

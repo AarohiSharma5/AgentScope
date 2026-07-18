@@ -282,39 +282,17 @@ def _short_label(text: str, limit: int = 72) -> str:
     return label if len(label) <= limit else label[: limit - 1].rstrip() + "…"
 
 
-def list_trace_areas() -> list[dict]:
-    """The application/areas requests are grouped into, for the primary filter.
+def _assemble_areas(project_rows, prompt_rows) -> list[dict]:
+    """Build the area list shared by requests and agent runs.
 
-    Returns a tenant-scoped, count-annotated list where each area is either an
-    explicit ``project`` tag or — for traffic with no project — a distinct
-    ``system_prompt`` (the artifact that de-facto defines an area today).
-
-    Crucially, every area carries the **system prompt that drives it**: an area
-    is really "an application and the system prompt behind it", which is what the
-    owner of a surface needs to see. For a ``project`` that is the most-used
-    system prompt among its traces (with ``system_prompt_variants`` counting how
-    many distinct prompts that project has, so prompt drift is visible); for a
-    system-prompt area it is the prompt itself.
-
-    Each entry carries the ``type`` the caller passes back as a filter param
-    (``project`` or ``system_prompt``), the raw ``value`` to filter on, a display
-    ``label``, the row ``count``, the ``system_prompt`` text and
-    ``system_prompt_variants``. Ordered by count desc so the busiest surfaces
-    surface first.
+    ``project_rows`` are ``(project, system_prompt, count)`` tuples (one per
+    distinct prompt within a project, so prompt drift is visible) and
+    ``prompt_rows`` are ``(system_prompt, count)`` tuples for untagged traffic.
+    Each returned area carries the **system prompt that drives it** — for a
+    project the most-used prompt (with ``system_prompt_variants`` counting how
+    many distinct prompts it runs), for a system-prompt area the prompt itself.
+    Ordered by count desc so the busiest surfaces surface first.
     """
-    org_id = _tenant_scope()
-
-    def _scope(query):
-        return query.filter(Trace.organization_id == org_id) if org_id is not None else query
-
-    # (project, system_prompt) -> count, so we can both total per project and
-    # find the dominant system prompt (and detect prompt drift) in one query.
-    project_rows = _scope(
-        db.session.query(Trace.project, Trace.system_prompt, func.count(Trace.id)).filter(
-            Trace.project.isnot(None)
-        )
-    ).group_by(Trace.project, Trace.system_prompt).all()
-
     per_project: dict[str, dict] = {}
     for project, system_prompt, count in project_rows:
         entry = per_project.setdefault(project, {"count": 0, "prompts": {}})
@@ -337,12 +315,6 @@ def list_trace_areas() -> list[dict]:
             }
         )
 
-    system_prompts = _scope(
-        db.session.query(Trace.system_prompt, func.count(Trace.id)).filter(
-            Trace.project.is_(None), Trace.system_prompt.isnot(None)
-        )
-    ).group_by(Trace.system_prompt).all()
-
     prompt_areas = [
         {
             "type": "system_prompt",
@@ -352,12 +324,69 @@ def list_trace_areas() -> list[dict]:
             "system_prompt": value,
             "system_prompt_variants": 1,
         }
-        for value, count in system_prompts
+        for value, count in prompt_rows
     ]
 
     areas = project_areas + prompt_areas
     areas.sort(key=lambda a: a["count"], reverse=True)
     return areas
+
+
+def list_trace_areas() -> list[dict]:
+    """The application/areas requests are grouped into, for the primary filter.
+
+    Tenant-scoped. Each area is either an explicit ``project`` tag or — for
+    traffic with no project — a distinct ``system_prompt`` (the artifact that
+    de-facto defines an area today). See :func:`_assemble_areas` for the shape.
+    """
+    org_id = _tenant_scope()
+
+    def _scope(query):
+        return query.filter(Trace.organization_id == org_id) if org_id is not None else query
+
+    project_rows = _scope(
+        db.session.query(Trace.project, Trace.system_prompt, func.count(Trace.id)).filter(
+            Trace.project.isnot(None)
+        )
+    ).group_by(Trace.project, Trace.system_prompt).all()
+
+    prompt_rows = _scope(
+        db.session.query(Trace.system_prompt, func.count(Trace.id)).filter(
+            Trace.project.is_(None), Trace.system_prompt.isnot(None)
+        )
+    ).group_by(Trace.system_prompt).all()
+
+    return _assemble_areas(project_rows, prompt_rows)
+
+
+def list_agent_run_areas() -> list[dict]:
+    """Applications/areas that agent runs belong to, for the Agent Runs filter.
+
+    An agent run inherits its application from its parent request ``Trace``
+    (every run has one), so this groups runs by ``Trace.project`` /
+    ``Trace.system_prompt`` via a join. Same shape as :func:`list_trace_areas`,
+    counting agent runs instead of traces.
+    """
+    org_id = _tenant_scope()
+
+    def _scope(query):
+        if org_id is not None:
+            query = query.filter(AgentRun.organization_id == org_id)
+        return query.join(Trace, AgentRun.request_id == Trace.id)
+
+    project_rows = _scope(
+        db.session.query(Trace.project, Trace.system_prompt, func.count(AgentRun.id)).filter(
+            Trace.project.isnot(None)
+        )
+    ).group_by(Trace.project, Trace.system_prompt).all()
+
+    prompt_rows = _scope(
+        db.session.query(Trace.system_prompt, func.count(AgentRun.id)).filter(
+            Trace.project.is_(None), Trace.system_prompt.isnot(None)
+        )
+    ).group_by(Trace.system_prompt).all()
+
+    return _assemble_areas(project_rows, prompt_rows)
 
 
 def get_trace(trace_id: int) -> Optional[Trace]:
@@ -722,14 +751,26 @@ def list_agent_runs(
     agent_type: Optional[str] = None,
     sort: str = "-created_at",
     q: Optional[str] = None,
+    project: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> tuple[list[AgentRun], int]:
     """Return a page of agent runs and the total matching count.
 
-    Filtering by ``status`` / ``agent_type``, free-text search (``q``), sorting
-    and pagination are all applied at the database level. Search matches the
-    agent name, type, status and (numeric) run/request ids, case-insensitively.
+    Filtering by application/area (``project`` or, for untagged traffic,
+    ``system_prompt`` — both resolved from the parent request ``Trace``),
+    ``status`` / ``agent_type``, free-text search (``q``), sorting and pagination
+    are all applied at the database level. Search matches the agent name, type,
+    status and (numeric) run/request ids, case-insensitively. The parent trace is
+    eager-loaded so serializing the application/system-prompt for a page of runs
+    is a single extra query, not one per row.
     """
     query = _scoped(AgentRun.query, AgentRun.organization_id)
+    if project or system_prompt:
+        query = query.join(Trace, AgentRun.request_id == Trace.id)
+        if project:
+            query = query.filter(Trace.project == project)
+        if system_prompt:
+            query = query.filter(Trace.system_prompt == system_prompt)
     if status is not None:
         query = query.filter(AgentRun.status == status)
     if agent_type is not None:
@@ -748,6 +789,7 @@ def list_agent_runs(
 
     total = query.count()
     query = _apply_agent_run_sort(query, sort)
+    query = query.options(selectinload(AgentRun.request))
     items = query.limit(limit).offset((page - 1) * limit).all()
     return items, total
 

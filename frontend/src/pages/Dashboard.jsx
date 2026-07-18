@@ -4,6 +4,8 @@ import StatCard from "../components/StatCard.jsx";
 import TracesTable from "../components/TracesTable.jsx";
 import SearchInput from "../components/SearchInput.jsx";
 import Pagination from "../components/Pagination.jsx";
+import AreaSelect from "../components/AreaSelect.jsx";
+import SystemPromptPanel from "../components/SystemPromptPanel.jsx";
 import Loading from "../components/ui/Loading.jsx";
 import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
@@ -38,8 +40,6 @@ export default function Dashboard() {
   const area = areaIdx === "" ? null : areas[Number(areaIdx)];
   const projectParam = area?.type === "project" ? area.value : undefined;
   const systemPromptParam = area?.type === "system_prompt" ? area.value : undefined;
-  const projectAreas = areas.filter((a) => a.type === "project");
-  const promptAreas = areas.filter((a) => a.type === "system_prompt");
 
   // List
   const [traces, setTraces] = useState([]);
@@ -141,32 +141,12 @@ export default function Dashboard() {
         {/* Filter bar — Application is the primary axis, the rest refine within it. */}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
-            <select
-              aria-label="Filter by application / area"
+            <AreaSelect
+              areas={areas}
               value={areaIdx}
               onChange={resetFilter(setAreaIdx)}
-              className={`${selectClass} sm:min-w-[16rem]`}
-            >
-              <option value="">All applications</option>
-              {projectAreas.length > 0 && (
-                <optgroup label="Applications">
-                  {projectAreas.map((a) => (
-                    <option key={`p-${a.value}`} value={String(areas.indexOf(a))}>
-                      {a.label} ({a.count})
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {promptAreas.length > 0 && (
-                <optgroup label="Untagged — grouped by system prompt">
-                  {promptAreas.map((a) => (
-                    <option key={`s-${a.value}`} value={String(areas.indexOf(a))}>
-                      {a.label} ({a.count})
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
+              className="sm:min-w-[16rem]"
+            />
             <SearchInput
               value={search}
               onChange={setSearch}
@@ -212,34 +192,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* System prompt behind the selected application — the artifact that
-            defines the area, shown so its owner can see exactly what's driving it. */}
-        {area && (
-          <div className="rounded-xl border border-ink-500 bg-ink-800/60 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-                System prompt ·{" "}
-                <span className="text-accent">
-                  {area.type === "project" ? area.value : "untagged area"}
-                </span>
-              </span>
-              {area.system_prompt_variants > 1 && (
-                <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-400">
-                  {area.system_prompt_variants} prompt variants in use
-                </span>
-              )}
-            </div>
-            {area.system_prompt ? (
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-gray-300">
-                {area.system_prompt}
-              </pre>
-            ) : (
-              <p className="text-xs text-gray-600">
-                No system prompt recorded for this application.
-              </p>
-            )}
-          </div>
-        )}
+        <SystemPromptPanel area={area} />
 
         {loading ? (
           <TableSkeleton columns={7} rows={8} />
