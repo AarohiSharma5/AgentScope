@@ -40,6 +40,7 @@ from .exporters import (
     LoggingExporter,
     MemoryExporter,
 )
+from .instrument import instrument_openai
 from .span import Span, SpanKind, SpanStatus, Trace
 from .tool import Tool
 from .tracer import Tracer, configure, get_config, get_tracer
@@ -52,6 +53,7 @@ __all__ = [
     "Agent",
     "Workflow",
     "Tool",
+    "instrument_openai",
     "configure",
     "get_config",
     # Configuration & runtime

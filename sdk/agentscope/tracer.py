@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Config, _merge
 from .exporters import ConsoleExporter, Exporter, HTTPExporter, LoggingExporter, MemoryExporter
+from .redaction import build_redactor
 from .span import Span, SpanKind, SpanStatus, Trace, _new_id
 
 logger = logging.getLogger("agentscope")
@@ -30,6 +31,7 @@ class Tracer:
         )
         self._memory = MemoryExporter(self._config.max_retained_traces)
         self._exporters: List[Exporter] = self._build_exporters(self._config)
+        self._redactor = build_redactor(self._config)
 
     # -- configuration ------------------------------------------------------
 
@@ -42,6 +44,7 @@ class Tracer:
         self._config = _merge(self._config, **changes)
         self._memory = MemoryExporter(self._config.max_retained_traces)
         self._exporters = self._build_exporters(self._config)
+        self._redactor = build_redactor(self._config)
         return self._config
 
     def _build_exporters(self, config: Config) -> List[Exporter]:
@@ -128,7 +131,14 @@ class Tracer:
         return span
 
     def _dispatch(self, trace: Trace) -> None:
-        """Send a finished trace to the in-memory buffer and every exporter."""
+        """Send a finished trace to the in-memory buffer and every exporter.
+
+        When redaction is enabled, scrub every span *first* so PII/secrets are
+        gone before the trace is buffered locally or exported anywhere.
+        """
+        if self._redactor is not None:
+            for span in trace.spans:
+                self._redactor.scrub_span(span)
         self._memory.export(trace)
         for exporter in self._exporters:
             try:

@@ -15,6 +15,9 @@ def fresh_tracer():
         console=False,
         log=False,
         default_model=None,
+        redact=False,
+        redactor=None,
+        redact_patterns=(),
     )
     trace.clear()
     yield

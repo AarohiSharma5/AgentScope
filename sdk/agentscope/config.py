@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
-from typing import Optional
+from typing import Callable, Optional, Tuple
 
 from .errors import ConfigurationError
 
@@ -57,6 +57,15 @@ class Config:
     max_retained_traces: int = 200
     #: Extra HTTP headers merged into every request to the server.
     headers: dict = field(default_factory=dict)
+    #: Scrub PII/secrets from span input/output/error/attributes *before* they
+    #: leave the process (nothing sensitive is exported or buffered). Off by
+    #: default because redaction is lossy for debugging.
+    redact: bool = False
+    #: Full override for scrubbing — a ``Callable[[str], str]``. When set it
+    #: replaces the built-in patterns entirely.
+    redactor: Optional[Callable[[str], str]] = None
+    #: Extra ``(regex, replacement)`` pairs appended to the built-in patterns.
+    redact_patterns: Tuple[Tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -70,6 +79,7 @@ class Config:
             log=_env_bool("AGENTSCOPE_LOG", False),
             default_model=os.getenv("AGENTSCOPE_DEFAULT_MODEL") or None,
             timeout=float(os.getenv("AGENTSCOPE_TIMEOUT", "5")),
+            redact=_env_bool("AGENTSCOPE_REDACT", False),
         )
 
 
