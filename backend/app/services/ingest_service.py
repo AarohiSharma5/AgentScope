@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from ..extensions import db
 from ..models.agent_trace import AgentStatus
+from ..redaction import redact_payload
 from ..utils.timeutils import utcnow
 from ..utils.unit_of_work import deferred_commits
 from ..utils.validation import ValidationError
@@ -53,6 +54,10 @@ def ingest_agent_run(data: dict):
     """
     if not isinstance(data, dict):
         raise ValidationError("request body must be a JSON object")
+
+    # Scrub PII/secrets across the whole nested payload before anything is
+    # persisted (no-op unless INGEST_REDACT is enabled).
+    data = redact_payload(data)
 
     agent_name = data.get("agent_name")
     if not agent_name or not str(agent_name).strip():
@@ -127,6 +132,8 @@ def ingest_retrieval(data: dict):
     """
     if not isinstance(data, dict):
         raise ValidationError("request body must be a JSON object")
+
+    data = redact_payload(data)  # scrub before persistence (no-op unless enabled)
 
     # One atomic transaction for the run + step + retrieval + documents (see
     # ingest_agent_run for why: no per-row commit storm, all-or-nothing).

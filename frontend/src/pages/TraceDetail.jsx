@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client.js";
 import StatusBadge from "../components/StatusBadge.jsx";
-import { fmtCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
+import { fmtRequestCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
 
 function Field({ label, children }) {
   return (
@@ -63,7 +63,9 @@ export default function TraceDetail() {
         <Field label="Input Tokens">{fmtNumber(trace.input_tokens)}</Field>
         <Field label="Output Tokens">{fmtNumber(trace.output_tokens)}</Field>
         <Field label="Total Tokens">{fmtNumber(trace.total_tokens)}</Field>
-        <Field label="Estimated Cost">{fmtCost(trace.estimated_cost)}</Field>
+        <Field label="Estimated Cost">
+          {fmtRequestCost(trace.estimated_cost, trace.total_tokens)}
+        </Field>
         <Field label="Latency">{fmtLatency(trace.latency_ms)}</Field>
         <Field label="Timestamp">{fmtTime(trace.timestamp)}</Field>
       </div>

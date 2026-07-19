@@ -14,8 +14,10 @@ from typing import Optional
 from sqlalchemy import String, case, cast, func, or_
 from sqlalchemy.orm import selectinload
 
+from .. import pricing
 from ..extensions import db
 from ..models.trace import Trace, TraceStatus
+from ..redaction import redact_payload
 from ..streaming import EventType, emit
 from ..models.agent_trace import (
     AgentRun,
@@ -35,29 +37,15 @@ from ..utils.validation import ensure_json_array, ensure_json_object
 
 logger = logging.getLogger("agentscope")
 
-# Rough price table (USD per 1K tokens) used to estimate cost when the caller
-# does not provide one. Extend as needed for your providers.
-_PRICE_PER_1K = {
-    # model_name: (input_price, output_price)
-    "gpt-4o": (0.0025, 0.01),
-    "gpt-4o-mini": (0.00015, 0.0006),
-    "gpt-4-turbo": (0.01, 0.03),
-    "gpt-3.5-turbo": (0.0005, 0.0015),
-    "claude-3-5-sonnet": (0.003, 0.015),
-    "claude-3-haiku": (0.00025, 0.00125),
-}
-
-
 def estimate_cost(model_name: str, input_tokens: int, output_tokens: int) -> Optional[float]:
-    """Estimate request cost in USD from the price table, or None if unknown."""
-    prices = _PRICE_PER_1K.get(model_name)
-    if not prices:
-        return None
-    in_price, out_price = prices
-    return round(
-        (input_tokens or 0) / 1000 * in_price + (output_tokens or 0) / 1000 * out_price,
-        6,
-    )
+    """Estimate request cost in USD, or ``None`` if the model is unpriced.
+
+    Delegates to the central, operator-overridable price table in
+    :mod:`app.pricing` (built-in defaults + ``MODEL_PRICES`` config + runtime
+    overrides, with versioned-name prefix matching). ``None`` means the cost is
+    *unknown*, not zero.
+    """
+    return pricing.estimate_cost(model_name, input_tokens, output_tokens)
 
 
 def _current_org_id() -> Optional[int]:
@@ -123,6 +111,10 @@ def invalidate_metrics_cache(organization_id: Optional[int] = None) -> None:
 
 def create_trace(data: dict) -> Trace:
     """Create and persist a Trace from a payload dict."""
+    # Defense-in-depth: scrub PII/secrets before persistence when INGEST_REDACT
+    # is on (no-op otherwise). Covers both POST /traces and the parent trace
+    # synthesised during agent-run/retrieval ingest.
+    data = redact_payload(data)
     input_tokens = data.get("input_tokens")
     output_tokens = data.get("output_tokens")
     total_tokens = data.get("total_tokens")

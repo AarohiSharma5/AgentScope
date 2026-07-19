@@ -48,13 +48,21 @@ _OPENAI_PRICES = {
 
 
 def _estimate_cost(
-    model: Optional[str], input_tokens: Optional[int], output_tokens: Optional[int]
+    model: Optional[str],
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    table: Optional[dict] = None,
 ) -> Optional[float]:
-    """Estimate cost in USD from the price table, or None if the model is unknown."""
+    """Estimate cost in USD from the price table, or None if the model is unknown.
+
+    ``table`` (default :data:`_OPENAI_PRICES`) maps a base model name to
+    ``(input_per_1k, output_per_1k)``; versioned names match by prefix.
+    """
     if not model:
         return None
+    table = table if table is not None else _OPENAI_PRICES
     prices = None
-    for base, table_prices in _OPENAI_PRICES.items():
+    for base, table_prices in table.items():
         if model == base or model.startswith(base + "-"):
             prices = table_prices
             break
@@ -119,7 +127,7 @@ def _start_span(kwargs: dict):
     return span, model, bool(kwargs.get("stream"))
 
 
-def _finish_span(span, model, resp, streaming: bool) -> None:
+def _finish_span(span, model, resp, streaming: bool, prices: Optional[dict] = None) -> None:
     """Populate output/tokens/cost on success and end the span."""
     if streaming:
         span.set_attribute("streaming", True)
@@ -130,11 +138,11 @@ def _finish_span(span, model, resp, streaming: bool) -> None:
         span.set_output(output_text)
     if input_tokens is not None or output_tokens is not None:
         span.set_tokens(input=input_tokens, output=output_tokens)
-        span.set_cost(_estimate_cost(model or resp_model, input_tokens, output_tokens))
+        span.set_cost(_estimate_cost(model or resp_model, input_tokens, output_tokens, prices))
     trace.end(span, status=SpanStatus.SUCCESS)
 
 
-def _traced_create(original):
+def _traced_create(original, prices: Optional[dict] = None):
     """Return a traced replacement for a ``chat.completions.create`` callable."""
     if inspect.iscoroutinefunction(original):
 
@@ -145,7 +153,7 @@ def _traced_create(original):
             except Exception as exc:  # noqa: BLE001 - record then re-raise
                 trace.end(span, status=SpanStatus.FAILED, error=f"{type(exc).__name__}: {exc}")
                 raise
-            _finish_span(span, model, resp, streaming)
+            _finish_span(span, model, resp, streaming, prices)
             return resp
 
         async_create.__agentscope_instrumented__ = True
@@ -158,19 +166,23 @@ def _traced_create(original):
         except Exception as exc:  # noqa: BLE001 - record then re-raise
             trace.end(span, status=SpanStatus.FAILED, error=f"{type(exc).__name__}: {exc}")
             raise
-        _finish_span(span, model, resp, streaming)
+        _finish_span(span, model, resp, streaming, prices)
         return resp
 
     create.__agentscope_instrumented__ = True
     return create
 
 
-def instrument_openai(client):
+def instrument_openai(client, prices: Optional[dict] = None):
     """Wrap an OpenAI client so ``chat.completions.create`` is auto-traced.
 
     Returns the same client (mutated in place) for convenience. Idempotent:
     wrapping an already-instrumented client is a no-op. Works with the sync
     ``OpenAI`` and async ``AsyncOpenAI`` clients (``openai>=1.0``).
+
+    Pass ``prices`` (``{model: (input_per_1k, output_per_1k)}``) to price your
+    own/fine-tuned models; it's merged over the built-in table so unknown models
+    still record no cost rather than a wrong one.
     """
     try:
         completions = client.chat.completions
@@ -183,5 +195,6 @@ def instrument_openai(client):
     original = completions.create
     if getattr(original, "__agentscope_instrumented__", False):
         return client
-    completions.create = _traced_create(original)
+    merged = {**_OPENAI_PRICES, **prices} if prices else None
+    completions.create = _traced_create(original, merged)
     return client

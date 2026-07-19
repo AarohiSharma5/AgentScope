@@ -8,6 +8,15 @@ export const fmtLatency = (ms) =>
 
 export const fmtCost = (c) => (c == null ? "—" : `$${Number(c).toFixed(4)}`);
 
+// Cost for a request, distinguishing "unknown/unpriced" from "no data". A null
+// cost when the call actually ran (tokens were used) means the model isn't in
+// the price table — surface that as "unpriced" so it's never mistaken for $0.
+export const fmtRequestCost = (cost, tokens) => {
+  if (cost != null) return `$${Number(cost).toFixed(4)}`;
+  if (tokens != null && Number(tokens) > 0) return "unpriced";
+  return "—";
+};
+
 // Similarity / probability score, rendered with 3 decimals.
 export const fmtScore = (s) => (s == null ? "—" : Number(s).toFixed(3));
 

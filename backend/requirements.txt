@@ -11,5 +11,10 @@ gunicorn==26.0.0
 # Real-time streaming (v0.6): WebSocket support over WSGI.
 flask-sock==0.7.0
 
+# Optional: cross-worker live streaming fan-out via Redis pub/sub (set
+# STREAM_BROKER_URL). Also usable as the shared rate-limit store. Safe to keep
+# installed; only used when a Redis URL is configured.
+redis==5.0.8
+
 # Testing (dev only)
 pytest==8.2.2

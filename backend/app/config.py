@@ -1,4 +1,6 @@
 """Application configuration loaded from environment variables."""
+import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -7,6 +9,49 @@ from dotenv import load_dotenv
 load_dotenv()
 
 basedir = os.path.abspath(os.path.dirname(__file__))
+
+
+def _load_model_prices():
+    """Parse ``AGENTSCOPE_MODEL_PRICES`` into a ``{model: [in, out]}`` dict.
+
+    The value may be an inline JSON object or a path to a JSON file, letting
+    operators price their own/self-hosted models without touching source. These
+    are merged over the built-in defaults in ``app.pricing``; malformed input is
+    ignored (never fatal) so a typo can't take the server down.
+    """
+    raw = os.getenv("AGENTSCOPE_MODEL_PRICES")
+    if not raw:
+        return {}
+    text = raw
+    if not raw.lstrip().startswith("{") and os.path.isfile(raw):
+        try:
+            with open(raw, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            logging.getLogger("agentscope").warning(
+                "could not read AGENTSCOPE_MODEL_PRICES file: %s", raw
+            )
+            return {}
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        logging.getLogger("agentscope").warning(
+            "AGENTSCOPE_MODEL_PRICES is not valid JSON; ignoring"
+        )
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _load_json_env(name: str, default):
+    """Parse an env var as inline JSON, returning ``default`` if unset/invalid."""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        logging.getLogger("agentscope").warning("%s is not valid JSON; ignoring", name)
+        return default
 
 
 class Config:
@@ -67,6 +112,20 @@ class Config:
     # aggregations such as dashboard metrics. Set to 0 to disable caching.
     METRICS_CACHE_TTL = float(os.getenv("METRICS_CACHE_TTL", "5"))
 
+    # Per-model prices (USD per 1K tokens) that override/extend the built-in
+    # table in ``app.pricing``, so cost estimates are accurate for your own or
+    # self-hosted models. Shape: ``{"my-model": [input_per_1k, output_per_1k]}``
+    # (a bare number = input-only price). Supplied via ``AGENTSCOPE_MODEL_PRICES``
+    # as inline JSON or a path to a JSON file.
+    MODEL_PRICES = _load_model_prices()
+
+    # Server-side PII/secret redaction at ingest (defense-in-depth for non-SDK
+    # clients that POST raw JSON). Off by default because redaction is lossy for
+    # debugging. When on, prompt/response/tool/document text is scrubbed before
+    # persistence. Extend the built-ins via a JSON array of ``[regex, replacement]``.
+    INGEST_REDACT = os.getenv("AGENTSCOPE_INGEST_REDACT", "false").lower() == "true"
+    INGEST_REDACT_PATTERNS = _load_json_env("AGENTSCOPE_INGEST_REDACT_PATTERNS", [])
+
     # Cap COUNT(*) on very large tables to keep list endpoints fast. A list
     # response reports up to this many rows as its total (with a flag), avoiding
     # a full-table count on millions of rows. Set to 0 to always count exactly.
@@ -99,6 +158,18 @@ class Config:
     # -- Real-time streaming (v0.6) -----------------------------------------
     # Heartbeat cadence (seconds) for SSE/WebSocket connections.
     STREAM_HEARTBEAT_INTERVAL = float(os.getenv("STREAM_HEARTBEAT_INTERVAL", "15"))
+
+    # Cross-worker live streaming. In-process by default: with multiple gunicorn
+    # workers, an event emitted on one worker only reaches clients connected to
+    # that same worker. Set a Redis URL to fan events out across all workers via
+    # pub/sub (event ids stay globally monotonic for reconnection). Falls back to
+    # ``RATE_LIMIT_STORAGE_URL`` if you already run Redis for rate limiting.
+    STREAM_BROKER_URL = (
+        os.getenv("STREAM_BROKER_URL")
+        or os.getenv("REDIS_URL")
+        or os.getenv("RATE_LIMIT_STORAGE_URL")
+        or None
+    )
 
     # -- Plugin system (v0.6) -----------------------------------------------
     # Discover, install and enable plugins at startup. Set False to disable.

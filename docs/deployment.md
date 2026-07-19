@@ -66,23 +66,40 @@ gunicorn --worker-class gthread --workers 1 --threads 32 \
 
 ### Streaming and scaling (important)
 
-The real-time hub (`LiveTraceManager`) and the auth rate limiter are
+By default the real-time hub (`LiveTraceManager`) and the auth rate limiter are
 **in-process**: their state lives in one worker's memory. Consequences for the
 streaming endpoints (`/api/stream`, `/api/ws`):
 
-- **Run streaming on a single worker.** Events are fanned out only to
-  subscribers connected to the *same* worker that emitted them. With multiple
-  workers, a live client silently misses every event produced on another worker
-  (roughly `1 − 1/workers` of them), and `Last-Event-ID` replay only covers one
-  worker's history buffer. The default image therefore runs `--workers 1`.
+- **Without a broker, run streaming on a single worker.** Events are fanned out
+  only to subscribers connected to the *same* worker that emitted them. With
+  multiple workers, a live client silently misses every event produced on
+  another worker (roughly `1 − 1/workers` of them), and `Last-Event-ID` replay
+  only covers one worker's history buffer. The default image therefore runs
+  `--workers 1`.
 - **A single threaded worker scales vertically** (tens of thousands of
   concurrent SSE/WS connections and ample REST throughput for typical
   dashboards) because threads, not workers, carry the streams.
-- **To scale out to multiple workers/replicas,** put a shared broker
-  (Redis/NATS pub/sub) behind the hub so every worker sees every event, and use
-  a shared rate-limit store. Until then, keep one worker (add sticky sessions if
-  a load balancer sits in front). The non-streaming REST API is stateless and
-  safe to scale horizontally on its own.
+
+### Scaling streaming across workers/replicas (Redis)
+
+Set **`STREAM_BROKER_URL`** to a Redis URL to fan events out across every worker
+and replica via Redis pub/sub. Each worker publishes its events to a shared
+channel and a background listener delivers peer workers' events into its own
+local subscribers; event ids come from a Redis `INCR` counter so `Last-Event-ID`
+reconnection stays coherent cluster-wide. It degrades gracefully — if Redis is
+briefly unreachable, id allocation falls back to a local counter and publish
+failures are logged, never breaking the request that produced the event.
+
+```bash
+STREAM_BROKER_URL=redis://redis:6379/0     # or reuse RATE_LIMIT_STORAGE_URL / REDIS_URL
+gunicorn --worker-class gthread --workers 4 --threads 32 \
+         --timeout 120 --bind 0.0.0.0:8000 "app:create_app()"
+```
+
+Requires the `redis` package (already in `requirements.txt`). Pair it with a
+shared rate-limit store (`RATE_LIMIT_STORAGE_URL`) so limits hold cluster-wide.
+The non-streaming REST API is stateless and safe to scale horizontally either
+way.
 
 Every event is tagged with its owning organization at emit time and a stream
 only ever delivers its subscriber's own tenant's events (matching the tenant
@@ -99,6 +116,8 @@ isolation on the REST API).
 | `PORT` | `8000` | Backend port. |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed origins. |
 | `STREAM_HEARTBEAT_INTERVAL` | `15` | SSE/WebSocket heartbeat seconds. |
+| `STREAM_BROKER_URL` | _(unset)_ | Redis URL for cross-worker streaming fan-out; unset = single-worker in-process. |
+| `AGENTSCOPE_MODEL_PRICES` | _(unset)_ | Model prices (USD/1K tokens) as inline JSON or a file path; extends built-ins. |
 | `PLUGINS_AUTOLOAD` | `true` | Discover/enable plugins at startup. |
 | `PLUGINS_PACKAGES` | `app.plugins.builtins` | Packages scanned for plugins. |
 | `PLUGINS_ENTRYPOINT_GROUP` | `agentscope.plugins` | pip entry-point group for third-party plugins. |

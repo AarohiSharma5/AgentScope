@@ -70,6 +70,10 @@ class Event:
     # only to unscoped viewers. It is kept off the wire (not in ``to_dict``) so a
     # client never sees another tenant's id.
     organization_id: Optional[int] = None
+    # Origin worker/process id. Set when an event is published so that the same
+    # event, echoed back over a cross-process broker (Redis), can be recognised
+    # as our own and not re-delivered locally. Never sent to clients.
+    origin: Optional[str] = None
     # Lazily-computed, cached wire encodings. A single broadcast event is
     # delivered to every subscriber and serialized once per subscriber; caching
     # collapses that to one json.dumps regardless of the fan-out size.
@@ -83,6 +87,34 @@ class Event:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "type": self.type, "timestamp": self.timestamp, "data": self.data}
+
+    def to_wire(self) -> dict:
+        """Full inter-worker encoding for a cross-process broker.
+
+        Unlike :meth:`to_dict` (client-facing), this carries the tenant id and
+        the ``origin`` tag so a peer worker can fan it out with the correct
+        tenant scope and skip its own echo. Never sent to a client.
+        """
+        return {
+            "id": self.id,
+            "type": self.type,
+            "timestamp": self.timestamp,
+            "data": self.data,
+            "organization_id": self.organization_id,
+            "origin": self.origin,
+        }
+
+    @classmethod
+    def from_wire(cls, raw: dict) -> "Event":
+        """Rebuild an :class:`Event` received from a peer worker via the broker."""
+        return cls(
+            id=int(raw.get("id") or 0),
+            type=raw.get("type", ""),
+            data=raw.get("data") or {},
+            timestamp=raw.get("timestamp") or utcnow().isoformat(),
+            organization_id=raw.get("organization_id"),
+            origin=raw.get("origin"),
+        )
 
     def to_json(self) -> str:
         """Serialize for a WebSocket text frame (cached)."""

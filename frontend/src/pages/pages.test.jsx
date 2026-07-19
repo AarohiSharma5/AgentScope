@@ -9,6 +9,10 @@ vi.mock("../api/client.js", () => ({
     getStats: vi.fn(),
     getTraces: vi.fn(),
     getAgentRuns: vi.fn(),
+    // Filter facets load on mount for these pages; default to empty so tests
+    // that don't care about filtering still render.
+    getTraceFacets: vi.fn(() => Promise.resolve({ areas: [], models: [], statuses: [] })),
+    getAgentRunFacets: vi.fn(() => Promise.resolve({ areas: [], statuses: [] })),
   },
 }));
 

@@ -1,6 +1,6 @@
 import StatusBadge from "./StatusBadge.jsx";
 import DataTable from "./DataTable.jsx";
-import { fmtCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
+import { fmtRequestCost, fmtLatency, fmtNumber, fmtTime } from "../lib/format.js";
 
 const COLUMNS = [
   {
@@ -51,7 +51,16 @@ const COLUMNS = [
     header: "Cost",
     align: "right",
     className: "font-mono text-gray-300",
-    render: (t) => fmtCost(t.estimated_cost),
+    render: (t) => {
+      const label = fmtRequestCost(t.estimated_cost, t.total_tokens);
+      return label === "unpriced" ? (
+        <span className="text-xs text-gray-600" title="Model not in the price table">
+          unpriced
+        </span>
+      ) : (
+        label
+      );
+    },
   },
   {
     key: "timestamp",

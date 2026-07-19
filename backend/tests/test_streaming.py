@@ -9,6 +9,7 @@ Covered:
 * The WebSocket handler logic via a fake socket.
 * Non-breaking emission wiring: service-layer calls broadcast events.
 """
+import itertools
 import threading
 import time
 
@@ -328,6 +329,143 @@ def test_shutdown_closes_all_subscribers():
     mgr.shutdown()
     assert mgr.stats()["subscribers"] == 0
     assert all(s.closed for s in subs)
+
+
+# -- Cross-worker broker (Redis-style fan-out) ------------------------------
+
+
+class _Bus:
+    """A stand-in for a shared pub/sub channel + global id counter (like Redis).
+
+    Publishing on any attached broker delivers the wire message to *every*
+    attached broker's remote handler, exactly like Redis pub/sub echoing to all
+    subscribers (including the publisher). ``next_id`` is a single shared counter
+    across all brokers, modelling ``INCR``.
+    """
+
+    def __init__(self):
+        self._brokers = []
+        self._seq = itertools.count(1)
+
+    def next_id(self):
+        return next(self._seq)
+
+    def register(self, broker):
+        self._brokers.append(broker)
+
+    def deliver(self, wire):
+        for broker in list(self._brokers):
+            if broker._on_remote is not None:
+                broker._on_remote(wire)
+
+
+class _BusBroker:
+    """Broker implementation backed by a shared :class:`_Bus` (test double)."""
+
+    def __init__(self, bus):
+        self._bus = bus
+        self._on_remote = None
+        bus.register(self)
+
+    def next_id(self):
+        return self._bus.next_id()
+
+    def publish(self, wire):
+        self._bus.deliver(wire)
+
+    def start(self, on_remote):
+        self._on_remote = on_remote
+
+    def stop(self):
+        pass
+
+
+def test_event_wire_roundtrip_preserves_tenant_and_origin():
+    event = new_event(9, EventType.TRACE_STARTED, {"n": 1}, organization_id=5)
+    event.origin = "worker-x"
+    wire = event.to_wire()
+    assert wire["organization_id"] == 5 and wire["origin"] == "worker-x"
+
+    back = Event.from_wire(wire)
+    assert back.id == 9 and back.organization_id == 5 and back.origin == "worker-x"
+    assert back.data == {"n": 1}
+
+    # The client-facing encoding must never leak tenant id or origin.
+    assert "organization_id" not in event.to_dict()
+    assert "origin" not in event.to_dict()
+
+
+def test_cross_worker_fan_out_via_broker():
+    """An event published on one worker reaches a subscriber on another."""
+    bus = _Bus()
+    worker_a = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+    worker_b = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+    sub_b = worker_b.subscribe()
+
+    published = worker_a.publish(EventType.TRACE_STARTED, {"n": 1})
+
+    received = next(sub_b.stream())
+    assert received.type == EventType.TRACE_STARTED
+    assert received.data == {"n": 1}
+    assert received.id == published.id  # global id carried across the bus
+
+
+def test_broker_does_not_duplicate_local_delivery():
+    """The publisher's own subscriber gets exactly one copy (echo is skipped)."""
+    bus = _Bus()
+    worker_a = LiveTraceManager(heartbeat_interval=0.05, broker=_BusBroker(bus))
+    LiveTraceManager(heartbeat_interval=0.05, broker=_BusBroker(bus))  # peer on bus
+    sub_a = worker_a.subscribe()
+
+    worker_a.publish(EventType.AGENT_STARTED, {"n": 1})
+
+    stream = sub_a.stream()
+    first = next(stream)
+    assert first.type == EventType.AGENT_STARTED
+    # If the echo were re-delivered locally we'd get a second AGENT_STARTED;
+    # instead the idle stream yields a heartbeat.
+    assert next(stream).type == EventType.HEARTBEAT
+
+
+def test_cross_worker_respects_tenant_scope():
+    bus = _Bus()
+    worker_a = LiveTraceManager(heartbeat_interval=0.05, broker=_BusBroker(bus))
+    worker_b = LiveTraceManager(heartbeat_interval=0.05, broker=_BusBroker(bus))
+    sub_org1 = worker_b.subscribe(org_scope=1)
+
+    worker_a.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=2)  # other tenant
+    worker_a.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=1)  # matches
+
+    got = next(sub_org1.stream())
+    assert got.data == {"n": 2}
+
+
+def test_broker_ids_are_globally_monotonic():
+    bus = _Bus()
+    worker_a = LiveTraceManager(broker=_BusBroker(bus))
+    worker_b = LiveTraceManager(broker=_BusBroker(bus))
+    e1 = worker_a.publish(EventType.TRACE_STARTED, {})
+    e2 = worker_b.publish(EventType.TRACE_STARTED, {})
+    e3 = worker_a.publish(EventType.TRACE_STARTED, {})
+    assert e1.id < e2.id < e3.id
+
+
+def test_build_broker_defaults_to_in_process():
+    from app.streaming.broker import InProcessBroker, build_broker
+
+    assert isinstance(build_broker(None), InProcessBroker)
+    assert isinstance(build_broker(""), InProcessBroker)
+
+
+def test_build_broker_falls_back_when_redis_unavailable():
+    # A syntactically-fine but unusable URL must not raise; it falls back so the
+    # app still boots. (No connection is attempted at build time.)
+    from app.streaming.broker import build_broker
+
+    broker = build_broker("redis://nonexistent-host:6379/0")
+    # Either a RedisBroker (lazy, not yet connected) or in-process fallback — both
+    # are acceptable; the contract is simply "did not raise".
+    assert hasattr(broker, "next_id") and hasattr(broker, "publish")
 
 
 # -- SSE HTTP endpoint ------------------------------------------------------

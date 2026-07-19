@@ -60,6 +60,22 @@ def _register_lifecycle_shutdown(app: Flask) -> None:
         _SHUTDOWN_ATEXIT_REGISTERED = True
 
 
+def _configure_stream_broker(app: Flask) -> None:
+    """Attach the configured cross-worker streaming broker (Redis) if any.
+
+    No-op when ``STREAM_BROKER_URL`` is unset (single-process in-memory fan-out,
+    the default). Any failure falls back to in-process rather than blocking boot.
+    """
+    url = app.config.get("STREAM_BROKER_URL")
+    if not url:
+        return
+    from .streaming.broker import build_broker
+    from .streaming.manager import live_trace_manager
+
+    broker = build_broker(url)
+    live_trace_manager.use_broker(broker)
+
+
 def _configure_logging() -> None:
     """Configure a single ``agentscope`` logger (idempotent across reloads)."""
     logger = logging.getLogger("agentscope")
@@ -295,6 +311,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .plugins import init_plugins
     init_plugins(app)
 
+    _configure_stream_broker(app)
     _register_lifecycle_shutdown(app)
 
     return app

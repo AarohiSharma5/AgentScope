@@ -28,9 +28,11 @@ import itertools
 import logging
 import queue
 import threading
+import uuid
 from collections import deque
 from typing import Iterator, Optional
 
+from .broker import InProcessBroker
 from .events import Event, EventType, heartbeat_event, new_event
 
 logger = logging.getLogger("agentscope")
@@ -152,6 +154,7 @@ class LiveTraceManager:
         queue_size: int = DEFAULT_QUEUE_SIZE,
         heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
         max_dropped: int = DEFAULT_MAX_DROPPED,
+        broker=None,
     ) -> None:
         self.queue_size = queue_size
         self.heartbeat_interval = heartbeat_interval
@@ -159,8 +162,52 @@ class LiveTraceManager:
         self._subscribers: dict[int, Subscriber] = {}
         self._lock = threading.RLock()
         self._sub_ids = itertools.count(1)
-        self._event_ids = itertools.count(1)
         self._history: "deque[Event]" = deque(maxlen=history)
+        # Unique per manager instance (i.e. per worker process). Stamped on every
+        # published event so its echo over a cross-process broker is recognised
+        # as our own and not re-delivered locally.
+        self._origin = uuid.uuid4().hex
+        # Broker provides globally-monotonic ids and cross-worker fan-out. The
+        # default is single-process; ``use_broker`` swaps in Redis at startup.
+        self._broker = broker or InProcessBroker()
+        self._broker.start(self._ingest_remote)
+
+    # -- Broker (cross-worker fan-out) --------------------------------------
+
+    def use_broker(self, broker) -> None:
+        """Swap the fan-out broker (called at app startup once config is known)."""
+        old = self._broker
+        self._broker = broker
+        broker.start(self._ingest_remote)
+        try:
+            old.stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("previous stream broker stop failed", exc_info=True)
+
+    def _ingest_remote(self, wire: dict) -> None:
+        """Fan out an event produced by another worker (received via the broker).
+
+        Skips our own echo (same ``origin``); otherwise stores it in local
+        history (so any worker can replay recent cross-worker events on
+        reconnect) and delivers to matching local subscribers.
+        """
+        try:
+            event = Event.from_wire(wire)
+        except Exception:  # noqa: BLE001 - a malformed peer message must not crash us
+            logger.warning("dropping malformed broker event", exc_info=True)
+            return
+        if event.origin and event.origin == self._origin:
+            return
+        self._store_and_fanout(event)
+
+    def _store_and_fanout(self, event: Event) -> None:
+        """Append to history (under lock) and deliver to matching subscribers."""
+        with self._lock:
+            self._history.append(event)
+            targets = list(self._subscribers.values())
+        for subscriber in targets:
+            if subscriber.wants(event):
+                subscriber.put(event)
 
     # -- Subscription -------------------------------------------------------
 
@@ -213,20 +260,20 @@ class LiveTraceManager:
         organization_id: Optional[int] = None,
         **fields,
     ) -> Event:
-        """Build, store and fan out an event to all matching subscribers."""
+        """Build, store and fan out an event locally and to peer workers."""
         payload = dict(data or {})
         payload.update(fields)
         event = new_event(
-            next(self._event_ids), event_type, payload, organization_id=organization_id
+            self._broker.next_id(), event_type, payload, organization_id=organization_id
         )
+        event.origin = self._origin
 
-        with self._lock:
-            self._history.append(event)
-            targets = list(self._subscribers.values())
-
-        for subscriber in targets:
-            if subscriber.wants(event):
-                subscriber.put(event)
+        # Deliver locally first (fast path for this worker's own subscribers)…
+        self._store_and_fanout(event)
+        # …then hand to the broker so other workers can fan it out too. A no-op
+        # for the in-process broker; over Redis this reaches peer workers, which
+        # skip our echo by ``origin``.
+        self._broker.publish(event.to_wire())
         return event
 
     def emit(
@@ -277,12 +324,16 @@ class LiveTraceManager:
             subscriber.close()
 
     def shutdown(self) -> None:
-        """Close every subscriber (e.g. on app teardown)."""
+        """Close every subscriber and stop the broker (e.g. on app teardown)."""
         with self._lock:
             subs = list(self._subscribers.values())
             self._subscribers.clear()
         for subscriber in subs:
             subscriber.close()
+        try:
+            self._broker.stop()
+        except Exception:  # noqa: BLE001
+            logger.debug("stream broker stop failed during shutdown", exc_info=True)
         logger.info("LiveTraceManager shut down (%s subscribers closed)", len(subs))
 
 
