@@ -14,5 +14,5 @@ bandit==1.9.4
 pip-audit==2.7.3
 
 # Python package build (for the SDK)
-build==1.5.0
+build==1.5.1
 twine==6.2.0
