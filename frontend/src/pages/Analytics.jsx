@@ -28,22 +28,60 @@ function ChartCard({ title, subtitle, children }) {
   );
 }
 
+// Selectable time windows. `days: 0` tells the backend to return all history.
+const RANGES = [
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "All", days: 0 },
+];
+
+function RangePicker({ value, onChange, disabled }) {
+  return (
+    <div className="inline-flex rounded-lg border border-ink-500 bg-ink-700 p-0.5">
+      {RANGES.map((r) => (
+        <button
+          key={r.label}
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(r.days)}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+            value === r.days
+              ? "bg-ink-600 text-gray-100"
+              : "text-gray-400 hover:text-gray-200"
+          }`}
+        >
+          {r.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Analytics() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [days, setDays] = useState(90);
 
   useEffect(() => {
     let active = true;
+    setRefreshing(true);
     api
-      .getEvaluationAnalytics()
+      .getEvaluationAnalytics({ days })
       .then((data) => active && setAnalytics(data))
       .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      });
     return () => {
       active = false;
     };
-  }, []);
+  }, [days]);
 
   if (loading) return <Loading label="Loading analytics…" />;
   if (error) {
@@ -57,11 +95,14 @@ export default function Analytics() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-100">Analytics</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Cost, latency, quality and reliability trends across your evaluations.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-100">Analytics</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Cost, latency, quality and reliability trends across your evaluations.
+          </p>
+        </div>
+        <RangePicker value={days} onChange={setDays} disabled={refreshing} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">

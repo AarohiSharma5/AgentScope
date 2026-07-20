@@ -249,7 +249,8 @@ export const api = {
   getComparisons: (params, opts) => request(`/comparisons${buildQuery(params)}`, opts),
   createComparison: (body, opts) => post("/comparisons", body, opts),
   getEvaluationMetrics: (opts) => request("/dashboard/evaluation-metrics", opts),
-  getEvaluationAnalytics: (opts) => request("/dashboard/evaluation-analytics", opts),
+  getEvaluationAnalytics: (params, opts) =>
+    request(`/dashboard/evaluation-analytics${buildQuery(params)}`, opts),
 
   // v0.5 — prompt versions, prompt diff and trace diff
   getPromptVersions: (params, opts) => request(`/prompt-versions${buildQuery(params)}`, opts),
