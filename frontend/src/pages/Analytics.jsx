@@ -100,6 +100,80 @@ function Delta({ pct, goodDirection = "up" }) {
   );
 }
 
+// Per-model comparison table. Highlights the highest-scoring and cheapest
+// models so the cost/quality trade-off is obvious at a glance.
+function ModelBreakdown({ rows }) {
+  const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+  const scored = rows.filter((r) => r.average_evaluation_score != null);
+  const bestScore = scored.length
+    ? Math.max(...scored.map((r) => r.average_evaluation_score))
+    : null;
+  const costed = rows.filter((r) => r.average_cost != null);
+  const bestCost = costed.length ? Math.min(...costed.map((r) => r.average_cost)) : null;
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-gray-200">By Model</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Cost, quality and reliability per generating model over the selected period.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-500 text-left text-xs uppercase tracking-wider text-gray-500">
+              <th className="py-2 pr-4 font-medium">Model</th>
+              <th className="py-2 pr-4 text-right font-medium">Evals</th>
+              <th className="py-2 pr-4 text-right font-medium">Avg Score</th>
+              <th className="py-2 pr-4 text-right font-medium">Avg Cost</th>
+              <th className="py-2 pr-4 text-right font-medium">Avg Latency</th>
+              <th className="py-2 text-right font-medium">Failure Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const isBestScore =
+                bestScore != null && r.average_evaluation_score === bestScore;
+              const isBestCost = bestCost != null && r.average_cost === bestCost;
+              return (
+                <tr key={r.model} className="border-b border-ink-600/50 last:border-0">
+                  <td className="py-2 pr-4 font-mono text-gray-200">{r.model}</td>
+                  <td className="py-2 pr-4 text-right text-gray-300">
+                    {fmtNumber(r.evaluations)}
+                  </td>
+                  <td
+                    className={`py-2 pr-4 text-right ${
+                      isBestScore ? "text-emerald-400" : "text-gray-300"
+                    }`}
+                  >
+                    {fmtScore(r.average_evaluation_score)}
+                    {isBestScore && <span className="ml-1 text-[10px] uppercase">best</span>}
+                  </td>
+                  <td
+                    className={`py-2 pr-4 text-right ${
+                      isBestCost ? "text-emerald-400" : "text-gray-300"
+                    }`}
+                  >
+                    {fmtCost(r.average_cost)}
+                    {isBestCost && (
+                      <span className="ml-1 text-[10px] uppercase">cheapest</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-4 text-right text-gray-300">
+                    {fmtLatency(r.average_latency)}
+                  </td>
+                  <td className="py-2 text-right text-gray-300">{pct(r.failure_rate)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 // Breakdown of a single day, shown when a chart point is clicked.
 function DayDetail({ day, onClear }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
@@ -179,6 +253,7 @@ export default function Analytics() {
 
   const totals = analytics?.totals || {};
   const daily = analytics?.daily || [];
+  const byModel = analytics?.by_model || [];
   const label = (d) => dayLabel(d.date);
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
@@ -292,6 +367,8 @@ export default function Analytics() {
           sublabel={allTimeNote}
         />
       </div>
+
+      {byModel.length > 0 && <ModelBreakdown rows={byModel} />}
 
       {daily.length === 0 ? (
         <EmptyState

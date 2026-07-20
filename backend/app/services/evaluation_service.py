@@ -19,6 +19,7 @@ from ..evaluation.evaluators import Metrics
 from ..extensions import db
 from ..models.agent_trace import AgentStatus, AgentStep
 from ..models.evaluation_trace import EvaluationMetric, EvaluationRun
+from ..models.trace import Trace
 from ..models.workflow_trace import AgentNode, ConversationRun
 from ..services import replay_service
 from ..streaming import EventType, emit
@@ -397,7 +398,76 @@ def get_evaluation_analytics(days: Optional[int] = None) -> dict:
 
     headline = get_evaluation_metrics()
     headline["failure_rate"] = round(1 - headline["success_rate"], 4)
-    return {"daily": daily, "totals": headline}
+    return {"daily": daily, "totals": headline, "by_model": _analytics_by_model(since)}
+
+
+def _analytics_by_model(since: Optional[datetime]) -> list[dict]:
+    """Per generating-model breakdown of evaluation cost, quality and reliability.
+
+    Groups by the model that *produced* the conversation (``Trace.model_name``,
+    reached via the conversation's originating request) rather than the judge
+    model stored on the evaluation run. Uses the same set-based approach as the
+    daily series: one grouped query for run stats + latency, and one row-fold for
+    cost/tokens (a JSON column that isn't portably SUM-able in SQL).
+    """
+    # 1) Per-model run stats: evaluations, failures, mean score and mean latency.
+    stats_q = _scoped(
+        db.session.query(
+            Trace.model_name.label("model"),
+            func.count(EvaluationRun.id),
+            func.sum(case((EvaluationRun.status == AgentStatus.FAILED, 1), else_=0)),
+            func.avg(EvaluationRun.overall_score),
+            func.avg(ConversationRun.latency_ms),
+        )
+        .select_from(EvaluationRun)
+        .join(ConversationRun, EvaluationRun.conversation_run_id == ConversationRun.id)
+        .join(Trace, ConversationRun.request_trace_id == Trace.id),
+        EvaluationRun.organization_id,
+    )
+    if since is not None:
+        stats_q = stats_q.filter(EvaluationRun.created_at >= since)
+    stats_rows = stats_q.group_by(Trace.model_name).all()
+
+    # 2) Cost + tokens per model, folded in Python (see daily series rationale).
+    ct_q = _scoped(
+        db.session.query(Trace.model_name, AgentStep.cost, AgentStep.token_usage)
+        .select_from(EvaluationRun)
+        .join(ConversationRun, EvaluationRun.conversation_run_id == ConversationRun.id)
+        .join(Trace, ConversationRun.request_trace_id == Trace.id)
+        .join(AgentNode, AgentNode.conversation_run_id == EvaluationRun.conversation_run_id)
+        .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id),
+        EvaluationRun.organization_id,
+    )
+    if since is not None:
+        ct_q = ct_q.filter(EvaluationRun.created_at >= since)
+
+    cost_by_model: dict[str, float] = {}
+    tokens_by_model: dict[str, int] = {}
+    for model, cost, usage in ct_q.all():
+        cost_by_model[model] = cost_by_model.get(model, 0.0) + (cost or 0.0)
+        usage = usage or {}
+        tokens = usage.get("total") or ((usage.get("input") or 0) + (usage.get("output") or 0))
+        tokens_by_model[model] = tokens_by_model.get(model, 0) + tokens
+
+    out = []
+    for model, evaluations, failures, avg_score, avg_latency in stats_rows:
+        failures = failures or 0
+        total_cost = cost_by_model.get(model, 0.0)
+        out.append(
+            {
+                "model": model,
+                "evaluations": evaluations,
+                "failures": failures,
+                "failure_rate": round(failures / evaluations, 4) if evaluations else 0.0,
+                "average_evaluation_score": _round(avg_score, 4),
+                "average_cost": round(total_cost / evaluations, 6) if evaluations else None,
+                "average_latency": round(avg_latency, 2) if avg_latency is not None else None,
+                "tokens": tokens_by_model.get(model, 0),
+            }
+        )
+    # Busiest models first so the UI leads with the most-evaluated.
+    out.sort(key=lambda r: r["evaluations"], reverse=True)
+    return out
 
 
 def _round(value: Optional[float], places: int) -> Optional[float]:

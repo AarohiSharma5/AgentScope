@@ -199,6 +199,17 @@ def test_evaluation_analytics_dashboard(client, conversation):
         assert key in day
     assert data["totals"]["failure_rate"] == 0.0
 
+    # Per-model breakdown groups by the generating model (one conversation here).
+    assert "by_model" in data
+    assert len(data["by_model"]) == 1
+    model_row = data["by_model"][0]
+    for key in (
+        "model", "evaluations", "failure_rate",
+        "average_evaluation_score", "average_cost", "average_latency", "tokens",
+    ):
+        assert key in model_row
+    assert model_row["evaluations"] == 1
+
 
 def test_evaluation_analytics_aggregation_and_date_bounds(app_ctx):
     """Daily aggregation is correct and ``days`` bounds the window (H6).
