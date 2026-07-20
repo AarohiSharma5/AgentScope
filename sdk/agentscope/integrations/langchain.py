@@ -17,10 +17,7 @@ the tracer, so it ships wherever you've pointed AgentScope (HTTP, console, …).
 """
 from __future__ import annotations
 
-import json
-import logging
 import threading
-from functools import wraps
 from typing import Any, Dict, Optional
 
 try:  # LangChain is optional; fail loudly only when this module is imported.
@@ -31,34 +28,14 @@ except ImportError as exc:  # pragma: no cover - exercised only without langchai
         'pip install "agentscope-lite[langchain]"'
     ) from exc
 
-from ..instrument import (
-    _ANTHROPIC_PRICES,
-    _GEMINI_PRICES,
-    _OPENAI_PRICES,
-    _estimate_cost,
-)
 from ..span import Span, SpanKind, SpanStatus, Trace, _new_id
 from ..tracer import get_tracer
-
-logger = logging.getLogger("agentscope")
-
-# Reuse the auto-instrumentation price tables so LangChain LLM steps are costed
-# with the same numbers as direct SDK calls (unknown models stay uncosted).
-_PRICES = {**_OPENAI_PRICES, **_ANTHROPIC_PRICES, **_GEMINI_PRICES}
-
-
-def _guard(method):
-    """Never let a callback exception escape into LangChain / the user's app."""
-
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        try:
-            return method(self, *args, **kwargs)
-        except Exception:  # noqa: BLE001 - observability must not crash the app
-            logger.debug("AgentScope LangChain handler error in %s", method.__name__, exc_info=True)
-        return None
-
-    return wrapper
+from ._common import coerce as _coerce
+from ._common import err as _err
+from ._common import estimate_cost as _estimate_cost
+from ._common import guard as _guard
+from ._common import messages_text as _messages_text
+from ._common import tokens as _tokens
 
 
 def _name(serialized: Any, kwargs: dict) -> Optional[str]:
@@ -74,44 +51,12 @@ def _name(serialized: Any, kwargs: dict) -> Optional[str]:
     return None
 
 
-def _err(error: Any) -> str:
-    return f"{type(error).__name__}: {error}"
-
-
-def _coerce(value: Any) -> Any:
-    """Keep JSON-friendly payloads as-is; stringify anything the exporter can't
-    serialize (LangChain inputs/outputs are often rich objects)."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    try:
-        json.dumps(value)
-        return value
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _messages_text(messages: Any) -> Optional[str]:
+def _chat_messages_text(messages: Any) -> Optional[str]:
     """Flatten ``on_chat_model_start`` messages (List[List[BaseMessage]])."""
     if not messages:
         return None
     first = messages[0] if isinstance(messages, (list, tuple)) else messages
-    parts = []
-    for msg in first or []:
-        content = getattr(msg, "content", None)
-        role = getattr(msg, "type", None) or getattr(msg, "role", None)
-        if isinstance(content, str) and content:
-            parts.append(f"{role}: {content}" if role else content)
-    return "\n".join(parts) if parts else None
-
-
-def _tokens(input_tokens: Optional[int], output_tokens: Optional[int]) -> Optional[dict]:
-    if input_tokens is None and output_tokens is None:
-        return None
-    return {
-        "input": input_tokens,
-        "output": output_tokens,
-        "total": (input_tokens or 0) + (output_tokens or 0),
-    }
+    return _messages_text(first)
 
 
 def _parse_llm_result(response: Any):
@@ -265,7 +210,7 @@ class AgentScopeCallbackHandler(BaseCallbackHandler):
             _name(serialized, kwargs) or "chat_model",
             run_id,
             parent_run_id,
-            input=_messages_text(messages),
+            input=_chat_messages_text(messages),
         )
 
     @_guard
@@ -275,7 +220,7 @@ class AgentScopeCallbackHandler(BaseCallbackHandler):
             run_id,
             output=text,
             tokens=_tokens(input_tokens, output_tokens),
-            cost=_estimate_cost(model, input_tokens, output_tokens, _PRICES),
+            cost=_estimate_cost(model, input_tokens, output_tokens),
             model=model,
         )
 
