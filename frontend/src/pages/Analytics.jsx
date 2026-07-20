@@ -100,12 +100,59 @@ function Delta({ pct, goodDirection = "up" }) {
   );
 }
 
+// Breakdown of a single day, shown when a chart point is clicked.
+function DayDetail({ day, onClear }) {
+  const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+  const full = day.date
+    ? new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "Selected day";
+  const items = [
+    ["Evaluations", fmtNumber(day.evaluations)],
+    ["Failures", fmtNumber(day.failures)],
+    ["Failure Rate", pct(day.failure_rate)],
+    ["Avg Score", fmtScore(day.evaluation_score)],
+    ["Cost", fmtCost(day.cost)],
+    ["Latency", fmtLatency(day.latency_ms)],
+    ["Tokens", fmtNumber(day.tokens)],
+  ];
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-medium text-gray-200">
+          {full} <span className="ml-1 text-xs text-gray-500">· day breakdown</span>
+        </h3>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-md border border-ink-500 px-2 py-1 text-xs text-gray-400 transition-colors hover:text-gray-200"
+        >
+          Clear
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
+        {items.map(([k, v]) => (
+          <div key={k}>
+            <p className="text-xs uppercase tracking-wider text-gray-500">{k}</p>
+            <p className="mt-1 text-lg font-semibold text-gray-100">{v}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export default function Analytics() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [days, setDays] = useState(90);
+  const [selectedDate, setSelectedDate] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -147,6 +194,12 @@ export default function Analytics() {
   // is window-bounded, unlike the all-time `totals.total_evaluations`).
   const windowEvals = daily.reduce((sum, d) => sum + (d.evaluations || 0), 0);
 
+  // Build a chart series that carries each point's date as its key, so a click
+  // in any chart resolves back to the full daily bucket regardless of ordering.
+  const series = (fn) => daily.map((d) => ({ label: label(d), value: fn(d), key: d.date }));
+  const toggleDay = (d) => setSelectedDate((cur) => (cur === d.key ? null : d.key));
+  const selectedDay = selectedDate ? daily.find((d) => d.date === selectedDate) : null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -156,7 +209,14 @@ export default function Analytics() {
             Cost, latency, quality and reliability trends across your evaluations.
           </p>
         </div>
-        <RangePicker value={days} onChange={setDays} disabled={refreshing} />
+        <RangePicker
+          value={days}
+          onChange={(d) => {
+            setSelectedDate(null);
+            setDays(d);
+          }}
+          disabled={refreshing}
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -202,42 +262,57 @@ export default function Analytics() {
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
+          {selectedDay && (
+            <div className="lg:col-span-2">
+              <DayDetail day={selectedDay} onClear={() => setSelectedDate(null)} />
+            </div>
+          )}
           <ChartCard title="Daily Cost">
             <BarChart
-              data={daily.map((d) => ({ label: label(d), value: d.cost }))}
+              data={series((d) => d.cost)}
               format={fmtCost}
               label="Daily cost"
+              onSelect={toggleDay}
+              selectedKey={selectedDate}
             />
           </ChartCard>
           <ChartCard title="Daily Latency">
             <BarChart
-              data={daily.map((d) => ({ label: label(d), value: d.latency_ms }))}
+              data={series((d) => d.latency_ms)}
               format={fmtLatency}
               color="bg-sky-500/70"
               label="Daily latency"
+              onSelect={toggleDay}
+              selectedKey={selectedDate}
             />
           </ChartCard>
           <ChartCard title="Average Evaluation Score">
             <LineChart
-              data={daily.map((d) => ({ label: label(d), value: d.evaluation_score }))}
+              data={series((d) => d.evaluation_score)}
               format={fmtScore}
               label="Average evaluation score over time"
+              onSelect={toggleDay}
+              selectedKey={selectedDate}
             />
           </ChartCard>
           <ChartCard title="Token Usage">
             <BarChart
-              data={daily.map((d) => ({ label: label(d), value: d.tokens }))}
+              data={series((d) => d.tokens)}
               format={fmtNumber}
               color="bg-violet-500/70"
               label="Daily token usage"
+              onSelect={toggleDay}
+              selectedKey={selectedDate}
             />
           </ChartCard>
           <ChartCard title="Failure Rate">
             <BarChart
-              data={daily.map((d) => ({ label: label(d), value: d.failure_rate }))}
+              data={series((d) => d.failure_rate)}
               format={pct}
               color="bg-rose-500/70"
               label="Daily failure rate"
+              onSelect={toggleDay}
+              selectedKey={selectedDate}
             />
           </ChartCard>
           <ChartCard title="Reliability" subtitle="tool success · memory usage">

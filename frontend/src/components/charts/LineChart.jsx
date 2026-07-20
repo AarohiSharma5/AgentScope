@@ -8,7 +8,10 @@ export default function LineChart({
   height = 160,
   emptyMessage = "No data to chart.",
   label = "Line chart",
+  onSelect,
+  selectedKey,
 }) {
+  const interactive = typeof onSelect === "function";
   const points = data.filter((d) => d.value != null);
   if (points.length === 0) {
     return <p className="py-8 text-center text-sm text-gray-500">{emptyMessage}</p>;
@@ -50,18 +53,22 @@ export default function LineChart({
           className="text-accent"
           vectorEffect="non-scaling-stroke"
         />
-        {coords.map((c, i) => (
-          <circle
-            key={i}
-            cx={c.x}
-            cy={c.y}
-            r="1.6"
-            className="fill-accent"
-            vectorEffect="non-scaling-stroke"
-          >
-            <title>{`${c.d.label}: ${format(c.d.value)}`}</title>
-          </circle>
-        ))}
+        {coords.map((c, i) => {
+          const selected = interactive && c.d.key != null && c.d.key === selectedKey;
+          return (
+            <circle
+              key={i}
+              cx={c.x}
+              cy={c.y}
+              r={selected ? "3" : "1.6"}
+              className={`fill-accent ${interactive ? "cursor-pointer" : ""}`}
+              vectorEffect="non-scaling-stroke"
+              onClick={interactive ? () => onSelect(c.d) : undefined}
+            >
+              <title>{`${c.d.label}: ${format(c.d.value)}`}</title>
+            </circle>
+          );
+        })}
       </svg>
       <div
         className="mt-1 flex justify-between text-[10px] text-gray-400"
