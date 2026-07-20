@@ -17,6 +17,10 @@ from .span import Span, SpanKind, SpanStatus, Trace, _new_id
 
 logger = logging.getLogger("agentscope")
 
+# Sentinel distinguishing "no detached trace attribute" from a detached-but-None
+# (nested) span in end_span.
+_UNSET = object()
+
 
 class Tracer:
     """Creates spans, maintains the active span stack and dispatches traces."""
@@ -106,6 +110,34 @@ class Tracer:
         self._span_stack.set(stack + (span,))
         return span
 
+    def start_span_detached(
+        self,
+        name: str,
+        kind: str = SpanKind.STEP,
+        attributes: Optional[Dict[str, Any]] = None,
+        input: Any = None,  # noqa: A002 - public, mirrors platform API
+    ) -> Span:
+        """Start a span but immediately detach it from the active nesting context.
+
+        The span is still recorded under the correct parent trace (so nesting and
+        dispatch stay correct), but it is removed from the *active stack* so that
+        subsequent calls in this context do **not** nest under it. This is for
+        long-lived spans that outlive the call which created them — e.g. a
+        streaming LLM response the caller iterates later. End it with
+        :meth:`end_span` as usual (which will dispatch it if it is a root).
+        """
+        stack_before = self._span_stack.get()
+        trace_before = self._current_trace.get()
+        span = self.start_span(name, kind=kind, attributes=attributes, input=input)
+        # Restore the ambient context so this span isn't treated as the parent of
+        # whatever the caller does next. If it opened a fresh root trace, stash
+        # that trace on the span so end_span can still dispatch it later.
+        self._span_stack.set(stack_before)
+        if span.parent_id is None:
+            span._detached_trace = self._current_trace.get()
+            self._current_trace.set(trace_before)
+        return span
+
     def end_span(
         self,
         span: Span,
@@ -122,6 +154,14 @@ class Tracer:
             self._span_stack.set(stack[:-1])
         elif span in stack:
             self._span_stack.set(tuple(s for s in stack if s is not span))
+
+        # A detached span (see start_span_detached) carries its own root trace to
+        # dispatch (or None when it was nested — its parent will dispatch it).
+        detached = span.__dict__.pop("_detached_trace", _UNSET)
+        if detached is not _UNSET:
+            if detached is not None:
+                self._dispatch(detached)
+            return span
 
         if span.parent_id is None:
             trace = self._current_trace.get()

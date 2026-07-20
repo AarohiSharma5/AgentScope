@@ -34,6 +34,25 @@ class _Response:
         self.model = model
 
 
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _StreamChoice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+
+
+class _Chunk:
+    """A streamed chunk. A trailing usage-only chunk carries empty choices."""
+
+    def __init__(self, content=None, model="gpt-4o", usage=None):
+        self.choices = [_StreamChoice(content)] if content is not None else []
+        self.model = model
+        self.usage = usage
+
+
 class _Completions:
     def __init__(self, response=None, error=None):
         self._response = response
@@ -106,20 +125,150 @@ def test_instrument_is_idempotent():
     assert client.chat.completions.create is wrapped
 
 
-def test_streaming_records_minimal_span_without_consuming():
-    # A stream=True call returns an iterator; we must not consume it, so no
-    # output/tokens are captured — just a span flagged streaming.
-    stream_sentinel = iter(["chunk"])
-    client = agentscope.instrument_openai(_FakeClient(response=stream_sentinel))
+def test_streaming_captures_output_and_passes_chunks_through():
+    chunks = [_Chunk("Hel"), _Chunk("lo"), _Chunk("!")]
+    client = agentscope.instrument_openai(_FakeClient(response=iter(chunks)))
+
     out = client.chat.completions.create(
         model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True
     )
-    assert out is stream_sentinel  # untouched
+    # Nothing is finalised until the caller consumes the stream.
+    assert trace.finished() == []
+
+    received = list(out)
+    assert received == chunks  # every chunk passed through untouched
+
     span = _last().root
     assert span.status == SpanStatus.SUCCESS
     assert span.attributes.get("streaming") is True
-    assert span.output is None
+    assert span.output == "Hello!"  # reassembled from the deltas
+    # No usage on the stream (caller didn't opt in) -> tokens/cost unknown.
     assert span.tokens is None
+    assert span.attributes.get("streaming_usage") == "unavailable"
+
+
+def test_streaming_with_usage_records_tokens_and_cost():
+    chunks = [_Chunk("Hi"), _Chunk(None, usage=_Usage(10, 5))]  # trailing usage chunk
+    client = agentscope.instrument_openai(_FakeClient(response=iter(chunks)))
+
+    out = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    list(out)
+
+    span = _last().root
+    assert span.output == "Hi"
+    assert span.tokens == {"input": 10, "output": 5, "total": 15}
+    assert span.cost == pytest.approx(10 / 1000 * 0.0025 + 5 / 1000 * 0.01)
+
+
+def test_streaming_span_does_not_capture_later_calls_as_children():
+    """A still-open stream span must not become the parent of the next call."""
+
+    class _DualCompletions:
+        def create(self, **kwargs):
+            return iter([_Chunk("a")]) if kwargs.get("stream") else _Response("done", "gpt-4o", 1, 1)
+
+    class _DualClient:
+        def __init__(self):
+            self.chat = _Chat(_DualCompletions())
+
+    client = agentscope.instrument_openai(_DualClient())
+
+    stream = client.chat.completions.create(
+        model="gpt-4o", messages=[{"role": "user", "content": "q"}], stream=True
+    )
+    # Make an independent (non-stream) call while the stream is still open.
+    client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "q2"}])
+
+    standalone = _last()
+    assert standalone.root.output == "done"
+    assert len(standalone.spans) == 1  # its own trace, NOT nested under the stream
+
+    list(stream)  # now finish the stream -> its own separate trace
+    streamed = _last()
+    assert streamed.root.attributes.get("streaming") is True
+    assert streamed.root.output == "a"
+
+
+def test_streaming_close_finalizes_span():
+    client = agentscope.instrument_openai(_FakeClient(response=iter([_Chunk("a"), _Chunk("b")])))
+    stream = client.chat.completions.create(
+        model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True
+    )
+    it = iter(stream)
+    next(it)  # consume one chunk
+    stream.close()
+
+    span = _last().root
+    assert span.status == SpanStatus.SUCCESS
+    assert span.output == "a"
+
+
+def test_streaming_error_midway_marks_failed():
+    class _BoomStream:
+        def __init__(self):
+            self._i = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self._i += 1
+            if self._i == 1:
+                return _Chunk("part")
+            raise RuntimeError("mid-stream boom")
+
+    client = agentscope.instrument_openai(_FakeClient(response=_BoomStream()))
+    stream = client.chat.completions.create(
+        model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True
+    )
+    with pytest.raises(RuntimeError):
+        list(stream)
+
+    span = _last().root
+    assert span.status == SpanStatus.FAILED
+    assert "RuntimeError" in span.error
+
+
+def test_async_streaming_captures_output():
+    class _AsyncStream:
+        def __init__(self, chunks):
+            self._it = iter(chunks)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._it)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class _AsyncStreamCompletions:
+        async def create(self, **kwargs):
+            return _AsyncStream([_Chunk("Hel"), _Chunk("lo")])
+
+    class _AsyncClient:
+        def __init__(self):
+            self.chat = _Chat(_AsyncStreamCompletions())
+
+    client = agentscope.instrument_openai(_AsyncClient())
+
+    async def run():
+        stream = await client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True
+        )
+        return [chunk async for chunk in stream]
+
+    asyncio.run(run())
+    span = _last().root
+    assert span.status == SpanStatus.SUCCESS
+    assert span.output == "Hello"
+    assert span.attributes.get("streaming") is True
 
 
 def test_unknown_model_records_no_cost():
