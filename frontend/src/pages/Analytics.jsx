@@ -58,6 +58,48 @@ function RangePicker({ value, onChange, disabled }) {
   );
 }
 
+// Percent change of a metric between the earlier and the recent half of the
+// selected window. `pick` reads the metric off a daily bucket; buckets are
+// weighted by their evaluation count so busy days count more than quiet ones.
+// Returns null when there isn't enough data on both sides to compare.
+function trendPct(daily, pick) {
+  if (!daily || daily.length < 2) return null;
+  const mid = Math.floor(daily.length / 2);
+  const wavg = (rows) => {
+    let num = 0;
+    let den = 0;
+    for (const r of rows) {
+      const v = pick(r);
+      if (v == null) continue;
+      const w = r.evaluations || 0;
+      num += v * w;
+      den += w;
+    }
+    return den ? num / den : null;
+  };
+  const earlier = wavg(daily.slice(0, mid));
+  const recent = wavg(daily.slice(mid));
+  if (earlier == null || recent == null || earlier === 0) return null;
+  return (recent - earlier) / Math.abs(earlier);
+}
+
+// Colored ▲/▼ indicator. `goodDirection` says which way is an improvement so we
+// can color cost/latency/failures (down = good) opposite to score (up = good).
+function Delta({ pct, goodDirection = "up" }) {
+  if (pct == null) return <span className="text-gray-600">no trend yet</span>;
+  const asPct = pct * 100;
+  const flat = Math.abs(asPct) < 0.5;
+  const up = asPct > 0;
+  const good = up ? goodDirection === "up" : goodDirection === "down";
+  const color = flat ? "text-gray-500" : good ? "text-emerald-400" : "text-rose-400";
+  const arrow = flat ? "→" : up ? "▲" : "▼";
+  return (
+    <span className={color} title="Recent half of the selected period vs. the earlier half">
+      {arrow} {Math.abs(asPct).toFixed(1)}% vs earlier
+    </span>
+  );
+}
+
 export default function Analytics() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -93,6 +135,13 @@ export default function Analytics() {
   const label = (d) => dayLabel(d.date);
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
+  // Within-window trends for the four time-series metrics. Tool Success and
+  // Memory Usage aren't in the daily series, so they carry no delta.
+  const scoreTrend = trendPct(daily, (d) => d.evaluation_score);
+  const costTrend = trendPct(daily, (d) => (d.evaluations ? d.cost / d.evaluations : null));
+  const latencyTrend = trendPct(daily, (d) => d.latency_ms);
+  const failureTrend = trendPct(daily, (d) => d.failure_rate);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -106,10 +155,26 @@ export default function Analytics() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
-        <StatCard label="Avg Score" value={fmtScore(totals.average_evaluation_score)} />
-        <StatCard label="Avg Cost" value={fmtCost(totals.average_cost)} />
-        <StatCard label="Avg Latency" value={fmtLatency(totals.average_latency)} />
-        <StatCard label="Failure Rate" value={pct(totals.failure_rate)} />
+        <StatCard
+          label="Avg Score"
+          value={fmtScore(totals.average_evaluation_score)}
+          sublabel={<Delta pct={scoreTrend} goodDirection="up" />}
+        />
+        <StatCard
+          label="Avg Cost"
+          value={fmtCost(totals.average_cost)}
+          sublabel={<Delta pct={costTrend} goodDirection="down" />}
+        />
+        <StatCard
+          label="Avg Latency"
+          value={fmtLatency(totals.average_latency)}
+          sublabel={<Delta pct={latencyTrend} goodDirection="down" />}
+        />
+        <StatCard
+          label="Failure Rate"
+          value={pct(totals.failure_rate)}
+          sublabel={<Delta pct={failureTrend} goodDirection="down" />}
+        />
         <StatCard label="Tool Success" value={fmtScore(totals.average_tool_accuracy)} />
         <StatCard label="Memory Usage" value={fmtScore(totals.average_memory_usage)} />
       </div>
