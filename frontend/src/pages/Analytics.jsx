@@ -7,6 +7,7 @@ import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
 import BarChart from "../components/charts/BarChart.jsx";
 import LineChart from "../components/charts/LineChart.jsx";
+import ScatterChart from "../components/charts/ScatterChart.jsx";
 import { fmtCost, fmtLatency, fmtNumber, fmtScore } from "../lib/format.js";
 
 // Short "Jul 3" label from an ISO date (YYYY-MM-DD).
@@ -100,8 +101,29 @@ function Delta({ pct, goodDirection = "up" }) {
   );
 }
 
-// Per-model comparison table. Highlights the highest-scoring and cheapest
-// models so the cost/quality trade-off is obvious at a glance.
+// Best-effort provider inference from a model name. Keeps the cross-provider
+// comparison explicit on screen (the thing no single vendor dashboard shows).
+function providerOf(model) {
+  const m = (model || "").toLowerCase();
+  if (/(gpt|^o[0-9]|davinci|chatgpt|text-embedding|whisper|dall-e)/.test(m)) return "OpenAI";
+  if (m.includes("claude")) return "Anthropic";
+  if (/(gemini|palm|bison|gecko)/.test(m)) return "Google";
+  if (/(llama|meta-)/.test(m)) return "Meta";
+  if (/(mistral|mixtral|codestral)/.test(m)) return "Mistral";
+  if (m.includes("command") || m.includes("cohere")) return "Cohere";
+  if (m.includes("grok")) return "xAI";
+  return "Other";
+}
+
+// Quality per dollar: how much evaluation score each dollar buys. The headline
+// "value" metric that ties cost to outcome (higher is better).
+function qualityPerDollar(row) {
+  if (row.average_evaluation_score == null || !row.average_cost) return null;
+  return row.average_evaluation_score / row.average_cost;
+}
+
+// Per-model comparison table. Highlights the highest-scoring, cheapest and
+// best-value models so the cost/quality trade-off is obvious at a glance.
 function ModelBreakdown({ rows }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
   const scored = rows.filter((r) => r.average_evaluation_score != null);
@@ -110,6 +132,8 @@ function ModelBreakdown({ rows }) {
     : null;
   const costed = rows.filter((r) => r.average_cost != null);
   const bestCost = costed.length ? Math.min(...costed.map((r) => r.average_cost)) : null;
+  const values = rows.map(qualityPerDollar).filter((v) => v != null);
+  const bestValue = values.length ? Math.max(...values) : null;
 
   return (
     <Card className="p-5">
@@ -124,9 +148,11 @@ function ModelBreakdown({ rows }) {
           <thead>
             <tr className="border-b border-ink-500 text-left text-xs uppercase tracking-wider text-gray-500">
               <th className="py-2 pr-4 font-medium">Model</th>
+              <th className="py-2 pr-4 font-medium">Provider</th>
               <th className="py-2 pr-4 text-right font-medium">Evals</th>
               <th className="py-2 pr-4 text-right font-medium">Avg Score</th>
               <th className="py-2 pr-4 text-right font-medium">Avg Cost</th>
+              <th className="py-2 pr-4 text-right font-medium">Quality / $</th>
               <th className="py-2 pr-4 text-right font-medium">Avg Latency</th>
               <th className="py-2 text-right font-medium">Failure Rate</th>
             </tr>
@@ -136,9 +162,12 @@ function ModelBreakdown({ rows }) {
               const isBestScore =
                 bestScore != null && r.average_evaluation_score === bestScore;
               const isBestCost = bestCost != null && r.average_cost === bestCost;
+              const value = qualityPerDollar(r);
+              const isBestValue = bestValue != null && value === bestValue;
               return (
                 <tr key={r.model} className="border-b border-ink-600/50 last:border-0">
                   <td className="py-2 pr-4 font-mono text-gray-200">{r.model}</td>
+                  <td className="py-2 pr-4 text-gray-400">{providerOf(r.model)}</td>
                   <td className="py-2 pr-4 text-right text-gray-300">
                     {fmtNumber(r.evaluations)}
                   </td>
@@ -158,6 +187,16 @@ function ModelBreakdown({ rows }) {
                     {fmtCost(r.average_cost)}
                     {isBestCost && (
                       <span className="ml-1 text-[10px] uppercase">cheapest</span>
+                    )}
+                  </td>
+                  <td
+                    className={`py-2 pr-4 text-right ${
+                      isBestValue ? "text-emerald-400" : "text-gray-300"
+                    }`}
+                  >
+                    {value == null ? "—" : fmtNumber(Math.round(value))}
+                    {isBestValue && (
+                      <span className="ml-1 text-[10px] uppercase">best value</span>
                     )}
                   </td>
                   <td className="py-2 pr-4 text-right text-gray-300">
@@ -254,6 +293,15 @@ export default function Analytics() {
   const totals = analytics?.totals || {};
   const daily = analytics?.daily || [];
   const byModel = analytics?.by_model || [];
+  // Models plottable on the cost/quality quadrant (need both dimensions).
+  const costQuality = byModel
+    .filter((m) => m.average_cost != null && m.average_evaluation_score != null)
+    .map((m) => ({
+      x: m.average_cost,
+      y: m.average_evaluation_score,
+      label: m.model,
+      size: m.evaluations,
+    }));
   const label = (d) => dayLabel(d.date);
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
@@ -369,6 +417,22 @@ export default function Analytics() {
       </div>
 
       {byModel.length > 0 && <ModelBreakdown rows={byModel} />}
+
+      {costQuality.length > 0 && (
+        <ChartCard
+          title="Cost vs Quality"
+          subtitle="bubble size = evaluations"
+        >
+          <ScatterChart
+            data={costQuality}
+            xFormat={fmtCost}
+            yFormat={fmtScore}
+            xLabel="Cost"
+            yLabel="Score"
+            label="Cost versus quality by model"
+          />
+        </ChartCard>
+      )}
 
       {daily.length === 0 ? (
         <EmptyState

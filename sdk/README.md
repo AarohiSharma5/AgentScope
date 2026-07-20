@@ -124,6 +124,29 @@ extends the built-in price table so your own/self-hosted/local models are costed
 too. Models with no known price still record token counts — cost is simply shown
 as **unpriced** rather than a misleading `$0`.
 
+## Framework integrations (LangChain)
+
+If you build on **LangChain**, you don't call the LLM SDK directly — the
+framework runs the agent loop for you. Register a callback handler once and the
+whole run (chains, LLM/chat-model calls, tools, retrievers) is captured as one
+nested trace, rebuilt from LangChain's own `run_id`/`parent_run_id` (so it's
+correct across threads and async):
+
+```bash
+pip install "agentscope-lite[langchain]"
+```
+
+```python
+from agentscope.integrations.langchain import AgentScopeCallbackHandler
+
+handler = AgentScopeCallbackHandler()
+agent.invoke({"input": "book me a flight"}, config={"callbacks": [handler]})
+```
+
+LangChain is an **optional** extra — `import agentscope` never requires it; the
+handler imports LangChain lazily and only when you use it. LLM steps are costed
+with the same price tables as the auto-instrumentation above.
+
 ## Agents, Tools and Workflows
 
 ```python

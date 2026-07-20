@@ -170,6 +170,18 @@ class Tracer:
                 self._dispatch(trace)
         return span
 
+    def emit(self, trace: Trace) -> None:
+        """Dispatch an externally-assembled trace (redact, buffer, export).
+
+        For integrations that build the span tree themselves — e.g. framework
+        callback handlers (LangChain/LlamaIndex) whose events arrive with their
+        own ``run_id``/``parent_run_id`` and can't use the contextvar-based
+        :meth:`start_span`/:meth:`end_span` nesting. Respects ``enabled``.
+        """
+        if not self._config.enabled:
+            return
+        self._dispatch(trace)
+
     def _dispatch(self, trace: Trace) -> None:
         """Send a finished trace to the in-memory buffer and every exporter.
 
