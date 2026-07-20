@@ -141,6 +141,11 @@ export default function Analytics() {
   const costTrend = trendPct(daily, (d) => (d.evaluations ? d.cost / d.evaluations : null));
   const latencyTrend = trendPct(daily, (d) => d.latency_ms);
   const failureTrend = trendPct(daily, (d) => d.failure_rate);
+  const successTrend = trendPct(daily, (d) => (d.evaluations == null ? null : 1 - d.failure_rate));
+
+  // Evaluations actually recorded inside the selected window (the daily series
+  // is window-bounded, unlike the all-time `totals.total_evaluations`).
+  const windowEvals = daily.reduce((sum, d) => sum + (d.evaluations || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -154,11 +159,26 @@ export default function Analytics() {
         <RangePicker value={days} onChange={setDays} disabled={refreshing} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StatCard
+          label="Evaluations"
+          value={fmtNumber(windowEvals)}
+          sublabel={`${daily.length} active ${daily.length === 1 ? "day" : "days"}`}
+        />
         <StatCard
           label="Avg Score"
           value={fmtScore(totals.average_evaluation_score)}
           sublabel={<Delta pct={scoreTrend} goodDirection="up" />}
+        />
+        <StatCard
+          label="Success Rate"
+          value={pct(totals.success_rate)}
+          sublabel={<Delta pct={successTrend} goodDirection="up" />}
+        />
+        <StatCard
+          label="Failure Rate"
+          value={pct(totals.failure_rate)}
+          sublabel={<Delta pct={failureTrend} goodDirection="down" />}
         />
         <StatCard
           label="Avg Cost"
@@ -169,11 +189,6 @@ export default function Analytics() {
           label="Avg Latency"
           value={fmtLatency(totals.average_latency)}
           sublabel={<Delta pct={latencyTrend} goodDirection="down" />}
-        />
-        <StatCard
-          label="Failure Rate"
-          value={pct(totals.failure_rate)}
-          sublabel={<Delta pct={failureTrend} goodDirection="down" />}
         />
         <StatCard label="Tool Success" value={fmtScore(totals.average_tool_accuracy)} />
         <StatCard label="Memory Usage" value={fmtScore(totals.average_memory_usage)} />
