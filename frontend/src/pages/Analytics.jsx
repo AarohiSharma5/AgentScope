@@ -194,6 +194,37 @@ export default function Analytics() {
   // is window-bounded, unlike the all-time `totals.total_evaluations`).
   const windowEvals = daily.reduce((sum, d) => sum + (d.evaluations || 0), 0);
 
+  // When a bounded range is selected, the headline cards are derived from the
+  // windowed daily series (weighted by each day's evaluation count) so they
+  // track the picker just like the charts. On "All" we keep the exact backend
+  // totals. Tool Success / Memory Usage aren't in the daily series, so they
+  // stay all-time regardless (and are labelled as such when a window is active).
+  const bounded = days > 0;
+  const wsum = (fn) => daily.reduce((s, d) => s + (fn(d) || 0), 0);
+  const wavg = (fn) => {
+    let num = 0;
+    let den = 0;
+    for (const d of daily) {
+      const v = fn(d);
+      if (v == null) continue;
+      const w = d.evaluations || 0;
+      num += v * w;
+      den += w;
+    }
+    return den ? num / den : null;
+  };
+  const winFailureRate = windowEvals ? wsum((d) => d.failures) / windowEvals : null;
+  const scoreValue = bounded ? wavg((d) => d.evaluation_score) : totals.average_evaluation_score;
+  const costValue = bounded ? (windowEvals ? wsum((d) => d.cost) / windowEvals : null) : totals.average_cost;
+  const latencyValue = bounded ? wavg((d) => d.latency_ms) : totals.average_latency;
+  const failureValue = bounded ? winFailureRate : totals.failure_rate;
+  const successValue = bounded
+    ? winFailureRate == null
+      ? null
+      : 1 - winFailureRate
+    : totals.success_rate;
+  const allTimeNote = bounded ? "all-time" : undefined;
+
   // Build a chart series that carries each point's date as its key, so a click
   // in any chart resolves back to the full daily bucket regardless of ordering.
   const series = (fn) => daily.map((d) => ({ label: label(d), value: fn(d), key: d.date }));
@@ -227,31 +258,39 @@ export default function Analytics() {
         />
         <StatCard
           label="Avg Score"
-          value={fmtScore(totals.average_evaluation_score)}
+          value={fmtScore(scoreValue)}
           sublabel={<Delta pct={scoreTrend} goodDirection="up" />}
         />
         <StatCard
           label="Success Rate"
-          value={pct(totals.success_rate)}
+          value={pct(successValue)}
           sublabel={<Delta pct={successTrend} goodDirection="up" />}
         />
         <StatCard
           label="Failure Rate"
-          value={pct(totals.failure_rate)}
+          value={pct(failureValue)}
           sublabel={<Delta pct={failureTrend} goodDirection="down" />}
         />
         <StatCard
           label="Avg Cost"
-          value={fmtCost(totals.average_cost)}
+          value={fmtCost(costValue)}
           sublabel={<Delta pct={costTrend} goodDirection="down" />}
         />
         <StatCard
           label="Avg Latency"
-          value={fmtLatency(totals.average_latency)}
+          value={fmtLatency(latencyValue)}
           sublabel={<Delta pct={latencyTrend} goodDirection="down" />}
         />
-        <StatCard label="Tool Success" value={fmtScore(totals.average_tool_accuracy)} />
-        <StatCard label="Memory Usage" value={fmtScore(totals.average_memory_usage)} />
+        <StatCard
+          label="Tool Success"
+          value={fmtScore(totals.average_tool_accuracy)}
+          sublabel={allTimeNote}
+        />
+        <StatCard
+          label="Memory Usage"
+          value={fmtScore(totals.average_memory_usage)}
+          sublabel={allTimeNote}
+        />
       </div>
 
       {daily.length === 0 ? (
