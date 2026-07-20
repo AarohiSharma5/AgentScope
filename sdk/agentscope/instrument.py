@@ -17,6 +17,8 @@ Supported today:
   same client with a different ``base_url``.
 * **Anthropic** (``anthropic>=0.20``) — ``instrument_anthropic`` — sync ``Anthropic``
   and async ``AsyncAnthropic`` (``messages.create``).
+* **Gemini** (``google-generativeai``) — ``instrument_gemini`` — a
+  ``GenerativeModel``'s ``generate_content`` / ``generate_content_async``.
 
 Streaming (``stream=True``) is fully captured for both: the returned stream is
 wrapped so chunks pass straight through to you while we accumulate the output
@@ -43,7 +45,7 @@ Example
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
 from .api import trace
@@ -67,6 +69,14 @@ _ANTHROPIC_PRICES = {
     "claude-3-opus": (0.015, 0.075),
     "claude-3-sonnet": (0.003, 0.015),
     "claude-3-haiku": (0.00025, 0.00125),
+}
+
+_GEMINI_PRICES = {
+    "gemini-1.5-pro": (0.00125, 0.005),
+    "gemini-1.5-flash": (0.000075, 0.0003),
+    "gemini-1.5-flash-8b": (0.0000375, 0.00015),
+    "gemini-2.0-flash": (0.0001, 0.0004),
+    "gemini-1.0-pro": (0.0005, 0.0015),
 }
 
 
@@ -116,10 +126,13 @@ def _text_from_content(content: Any) -> Optional[str]:
 
 # ---------------------------------------------------------------------------
 # Provider adapters — the only provider-specific logic. Each supplies:
-#   prompts(kwargs)  -> (system_prompt, user_prompt)
+#   resolve(bound_self, args, kwargs) -> (model, system_prompt, user_prompt, streaming)
 #   extract(resp)    -> (output_text, input_tokens, output_tokens, model)
 #   accumulate(chunk, state) -> fold a streamed chunk into normalised `state`
 # `state` keys: text (list), input_tokens, output_tokens, resp_model.
+# `method` is the client method we wrap (e.g. "create", "generate_content").
+# `bound_self` lets providers whose model/system live on the client object
+# (Gemini) resolve them, while message-based providers ignore it.
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +140,8 @@ def _text_from_content(content: Any) -> Optional[str]:
 class _Adapter:
     name: str
     prices: dict
-    prompts: Callable[[dict], tuple]
+    method: str
+    resolve: Callable[[Any, tuple, dict], tuple]
     extract: Callable[[Any], tuple]
     accumulate: Callable[[Any, dict], None]
 
@@ -185,10 +199,16 @@ def _openai_accumulate(chunk, state: dict) -> None:
             state["text"].append(content)
 
 
+def _openai_resolve(bound_self, args, kwargs):
+    system, user = _openai_prompts(kwargs)
+    return kwargs.get("model"), system, user, bool(kwargs.get("stream"))
+
+
 _OPENAI_ADAPTER = _Adapter(
     name="openai.chat.completions",
     prices=_OPENAI_PRICES,
-    prompts=_openai_prompts,
+    method="create",
+    resolve=_openai_resolve,
     extract=_openai_extract,
     accumulate=_openai_accumulate,
 )
@@ -247,12 +267,128 @@ def _anthropic_accumulate(event, state: dict) -> None:
             state["output_tokens"] = _get(usage, "output_tokens")
 
 
+def _anthropic_resolve(bound_self, args, kwargs):
+    system, user = _anthropic_prompts(kwargs)
+    return kwargs.get("model"), system, user, bool(kwargs.get("stream"))
+
+
 _ANTHROPIC_ADAPTER = _Adapter(
     name="anthropic.messages",
     prices=_ANTHROPIC_PRICES,
-    prompts=_anthropic_prompts,
+    method="create",
+    resolve=_anthropic_resolve,
     extract=_anthropic_extract,
     accumulate=_anthropic_accumulate,
+)
+
+
+# -- Gemini (google-generativeai: GenerativeModel.generate_content) ---------
+
+
+def _gemini_response_text(resp: Any) -> Optional[str]:
+    """Concatenate text parts from a Gemini response/chunk, avoiding the
+    ``.text`` property (which raises when a response has no text parts)."""
+    texts = []
+    for candidate in _get(resp, "candidates") or []:
+        content = _get(candidate, "content")
+        for part in (_get(content, "parts") if content is not None else None) or []:
+            text = _get(part, "text")
+            if isinstance(text, str):
+                texts.append(text)
+    if texts:
+        return "".join(texts)
+    try:
+        text = _get(resp, "text")
+    except Exception:  # noqa: BLE001 - .text raises when blocked / no text parts
+        return None
+    return text if isinstance(text, str) else None
+
+
+def _gemini_contents_text(contents: Any) -> Optional[str]:
+    """Best-effort user-prompt text from a ``generate_content`` ``contents`` arg."""
+    if contents is None or isinstance(contents, str):
+        return contents
+    if isinstance(contents, (list, tuple)):
+        texts = []
+        for item in contents:
+            if isinstance(item, str):
+                texts.append(item)
+                continue
+            parts = _get(item, "parts")
+            if parts:
+                for part in parts:
+                    text = part if isinstance(part, str) else _get(part, "text")
+                    if isinstance(text, str):
+                        texts.append(text)
+                continue
+            text = _get(item, "text")
+            if isinstance(text, str):
+                texts.append(text)
+        return "".join(texts) if texts else None
+    return _text_from_content(_get(contents, "parts"))
+
+
+def _gemini_system_text(model_obj: Any) -> Optional[str]:
+    """Best-effort system-instruction text off the GenerativeModel instance."""
+    if model_obj is None:
+        return None
+    si = getattr(model_obj, "_system_instruction", None) or getattr(model_obj, "system_instruction", None)
+    if si is None or isinstance(si, str):
+        return si
+    return _text_from_content(_get(si, "parts")) or _gemini_response_text(si)
+
+
+def _gemini_model_name(model_obj: Any) -> Optional[str]:
+    name = getattr(model_obj, "model_name", None) if model_obj is not None else None
+    if isinstance(name, str) and name.startswith("models/"):
+        name = name[len("models/"):]
+    return name
+
+
+def _gemini_resolve(bound_self, args, kwargs):
+    contents = kwargs.get("contents")
+    if contents is None and args:
+        contents = args[0]
+    return (
+        _gemini_model_name(bound_self),
+        _gemini_system_text(bound_self),
+        _gemini_contents_text(contents),
+        bool(kwargs.get("stream")),
+    )
+
+
+def _gemini_extract(resp: Any):
+    usage = _get(resp, "usage_metadata")
+    return (
+        _gemini_response_text(resp),
+        _get(usage, "prompt_token_count") if usage is not None else None,
+        _get(usage, "candidates_token_count") if usage is not None else None,
+        _get(resp, "model_version"),
+    )
+
+
+def _gemini_accumulate(chunk, state: dict) -> None:
+    text = _gemini_response_text(chunk)
+    if text:
+        state["text"].append(text)
+    usage = _get(chunk, "usage_metadata")
+    if usage is not None:
+        if _get(usage, "prompt_token_count") is not None:
+            state["input_tokens"] = _get(usage, "prompt_token_count")
+        if _get(usage, "candidates_token_count") is not None:
+            state["output_tokens"] = _get(usage, "candidates_token_count")
+    model = _get(chunk, "model_version")
+    if model:
+        state["resp_model"] = model
+
+
+_GEMINI_ADAPTER = _Adapter(
+    name="gemini.generate_content",
+    prices=_GEMINI_PRICES,
+    method="generate_content",
+    resolve=_gemini_resolve,
+    extract=_gemini_extract,
+    accumulate=_gemini_accumulate,
 )
 
 
@@ -261,19 +397,17 @@ _ANTHROPIC_ADAPTER = _Adapter(
 # ---------------------------------------------------------------------------
 
 
-def _start_span(adapter: _Adapter, kwargs: dict):
-    """Open an LLM span from create() kwargs; return (span, model, streaming).
+def _start_span(adapter: _Adapter, bound_self, args, kwargs):
+    """Open an LLM span from a call; return (span, model, streaming).
 
     Streaming spans are opened *detached* from the active nesting context: the
-    caller iterates the returned stream after ``create()`` returns, so the span
+    caller iterates the returned stream after the call returns, so the span
     outlives the call and must not become the parent of whatever runs next.
     """
-    model = kwargs.get("model")
-    system_prompt, user_prompt = adapter.prompts(kwargs)
+    model, system_prompt, user_prompt, streaming = adapter.resolve(bound_self, args, kwargs)
     attributes = {"model": model}
     if system_prompt is not None:
         attributes["system_prompt"] = system_prompt
-    streaming = bool(kwargs.get("stream"))
     tracer = get_tracer()
     start = tracer.start_span_detached if streaming else tracer.start_span
     span = start(adapter.name, kind="llm", attributes=attributes, input=user_prompt)
@@ -428,11 +562,15 @@ class _TracedAsyncStream:
 
 
 def _traced_create(original, adapter: _Adapter, prices: dict):
-    """Return a traced replacement for a provider's ``create`` callable."""
+    """Return a traced replacement for a provider's create/generate callable."""
+    # For methods whose model/system live on the client object (Gemini), the
+    # bound instance is reachable via the bound method's ``__self__``.
+    bound_self = getattr(original, "__self__", None)
+
     if inspect.iscoroutinefunction(original):
 
         async def async_create(*args, **kwargs):
-            span, model, streaming = _start_span(adapter, kwargs)
+            span, model, streaming = _start_span(adapter, bound_self, args, kwargs)
             try:
                 resp = await original(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 - record then re-raise
@@ -447,7 +585,7 @@ def _traced_create(original, adapter: _Adapter, prices: dict):
         return async_create
 
     def create(*args, **kwargs):
-        span, model, streaming = _start_span(adapter, kwargs)
+        span, model, streaming = _start_span(adapter, bound_self, args, kwargs)
         try:
             resp = original(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 - record then re-raise
@@ -463,12 +601,12 @@ def _traced_create(original, adapter: _Adapter, prices: dict):
 
 
 def _instrument(container, adapter: _Adapter, prices_override: Optional[dict]):
-    """Wrap ``container.create`` for one provider (idempotent)."""
-    original = container.create
-    if getattr(original, "__agentscope_instrumented__", False):
+    """Wrap ``container.<adapter.method>`` for one provider (idempotent)."""
+    original = getattr(container, adapter.method, None)
+    if original is None or getattr(original, "__agentscope_instrumented__", False):
         return
     prices = {**adapter.prices, **(prices_override or {})}
-    container.create = _traced_create(original, adapter, prices)
+    setattr(container, adapter.method, _traced_create(original, adapter, prices))
 
 
 def instrument_openai(client, prices: Optional[dict] = None):
@@ -514,3 +652,31 @@ def instrument_anthropic(client, prices: Optional[dict] = None):
         ) from exc
     _instrument(messages, _ANTHROPIC_ADAPTER, prices)
     return client
+
+
+def instrument_gemini(model, prices: Optional[dict] = None):
+    """Wrap a Gemini ``GenerativeModel`` so ``generate_content`` is auto-traced.
+
+    Returns the same model (mutated in place) for convenience. Idempotent. Works
+    with ``google-generativeai``'s ``GenerativeModel`` — both the sync
+    ``generate_content`` and async ``generate_content_async`` methods, including
+    streaming (``stream=True``). The model name and system instruction are read
+    off the model object; the prompt, response text, token usage and estimated
+    cost are captured.
+
+    Note: unlike OpenAI/Anthropic you instrument the **model** instance, since
+    that's what carries ``generate_content`` in the Gemini SDK::
+
+        model = agentscope.instrument_gemini(genai.GenerativeModel("gemini-1.5-pro"))
+
+    Pass ``prices`` to price models missing from the built-in Gemini table.
+    """
+    if not hasattr(model, "generate_content"):
+        raise TypeError(
+            "instrument_gemini expects a google-generativeai GenerativeModel "
+            "exposing .generate_content()."
+        )
+    _instrument(model, _GEMINI_ADAPTER, prices)
+    if hasattr(model, "generate_content_async"):
+        _instrument(model, replace(_GEMINI_ADAPTER, method="generate_content_async"), prices)
+    return model

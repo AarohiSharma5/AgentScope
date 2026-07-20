@@ -67,6 +67,63 @@ trace.end(span)
 Exceptions inside a traced scope mark the span **failed** (recording the error)
 and are re-raised unchanged.
 
+## Auto-instrument LLM SDKs
+
+Wrap your provider client once and every completion is traced automatically —
+prompt, response text, token usage and estimated cost — including **streaming**
+and **async** calls. No decorators or context managers needed.
+
+```python
+import agentscope
+
+# OpenAI (openai>=1.0) — sync OpenAI or async AsyncOpenAI
+from openai import OpenAI
+client = agentscope.instrument_openai(OpenAI())
+
+# Anthropic (anthropic>=0.20) — sync Anthropic or async AsyncAnthropic
+from anthropic import Anthropic
+claude = agentscope.instrument_anthropic(Anthropic())
+
+# Gemini (google-generativeai) — instrument the model instance
+import google.generativeai as genai
+model = agentscope.instrument_gemini(genai.GenerativeModel("gemini-1.5-pro"))
+```
+
+Each returns the same client (patched in place) and is **idempotent** — calling
+it twice is a no-op, so it's safe at import time.
+
+### Local & OpenAI-compatible providers (Ollama, vLLM, Groq, Together, …)
+
+Anything that speaks the OpenAI Chat Completions API is covered by
+`instrument_openai` — just point the OpenAI client at its `base_url`:
+
+```python
+from openai import OpenAI
+
+# Ollama (local)
+ollama = agentscope.instrument_openai(
+    OpenAI(base_url="http://localhost:11434/v1", api_key="ollama"),
+    prices={"llama3.2": (0, 0)},          # local = free; avoids "unpriced"
+)
+
+# vLLM (self-hosted OpenAI server)
+vllm = agentscope.instrument_openai(
+    OpenAI(base_url="http://localhost:8000/v1", api_key="x"),
+    prices={"my-finetune": (0.0002, 0.0006)},
+)
+
+# Groq
+groq = agentscope.instrument_openai(
+    OpenAI(base_url="https://api.groq.com/openai/v1", api_key="gsk_..."),
+    prices={"llama-3.1-70b-versatile": (0.00059, 0.00079)},
+)
+```
+
+The optional `prices` argument (USD per 1K tokens as `{model: (input, output)}`)
+extends the built-in price table so your own/self-hosted/local models are costed
+too. Models with no known price still record token counts — cost is simply shown
+as **unpriced** rather than a misleading `$0`.
+
 ## Agents, Tools and Workflows
 
 ```python

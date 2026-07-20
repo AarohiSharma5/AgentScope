@@ -40,7 +40,7 @@ from .exporters import (
     LoggingExporter,
     MemoryExporter,
 )
-from .instrument import instrument_anthropic, instrument_openai
+from .instrument import instrument_anthropic, instrument_gemini, instrument_openai
 from .span import Span, SpanKind, SpanStatus, Trace
 from .tool import Tool
 from .tracer import Tracer, configure, get_config, get_tracer
@@ -55,6 +55,7 @@ __all__ = [
     "Tool",
     "instrument_openai",
     "instrument_anthropic",
+    "instrument_gemini",
     "configure",
     "get_config",
     # Configuration & runtime
