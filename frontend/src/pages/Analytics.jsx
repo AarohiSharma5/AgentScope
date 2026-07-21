@@ -589,7 +589,7 @@ function AlertsPanel({ alerts, onSelectDate }) {
 
 // Deploy / change annotations: create, list and delete markers that appear on
 // the score trend so metric movements can be tied to what changed.
-function AnnotationsCard({ annotations, onAdd, onDelete }) {
+function AnnotationsCard({ annotations, onAdd, onDelete, readOnly = false }) {
   const [label, setLabel] = useState("");
   const [date, setDate] = useState("");
   const [description, setDescription] = useState("");
@@ -641,6 +641,7 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
           show on the score trend.
         </p>
       </div>
+      {!readOnly && (
       <form onSubmit={submit} className="mb-4 flex flex-wrap items-end gap-2">
         <div className="flex flex-col">
           <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Label</label>
@@ -674,7 +675,8 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
           {busy ? "Adding…" : "Add"}
         </button>
       </form>
-      {error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
+      )}
+      {!readOnly && error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
       {annotations.length === 0 ? (
         <p className="text-sm text-gray-500">No annotations yet.</p>
       ) : (
@@ -697,13 +699,15 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
                 >
                   Investigate →
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => onDelete(a.id)}
-                  className="text-xs text-gray-500 transition-colors hover:text-rose-400"
-                >
-                  Delete
-                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(a.id)}
+                    className="text-xs text-gray-500 transition-colors hover:text-rose-400"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </li>
           ))}
@@ -877,7 +881,7 @@ const BUDGET_STATUS = {
 // Budgets / SLOs: create, list and monitor cost caps and quality/latency/
 // failure thresholds. Each row shows a progress bar toward the threshold plus an
 // on-track / at-risk / breached badge, evaluated over the budget's own window.
-function BudgetsCard({ budgets, availableModels, onAdd, onDelete }) {
+function BudgetsCard({ budgets, availableModels, onAdd, onDelete, readOnly = false }) {
   const [name, setName] = useState("");
   const [metric, setMetric] = useState("cost");
   const [threshold, setThreshold] = useState("");
@@ -928,6 +932,7 @@ function BudgetsCard({ budgets, availableModels, onAdd, onDelete }) {
         </p>
       </div>
 
+      {!readOnly && (
       <form onSubmit={submit} className="mb-4 flex flex-wrap items-end gap-2">
         <div className="flex flex-col">
           <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Name</label>
@@ -994,7 +999,8 @@ function BudgetsCard({ budgets, availableModels, onAdd, onDelete }) {
           {busy ? "Adding…" : "Add"}
         </button>
       </form>
-      {error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
+      )}
+      {!readOnly && error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
 
       {budgets.length === 0 ? (
         <p className="text-sm text-gray-500">No budgets yet.</p>
@@ -1021,13 +1027,15 @@ function BudgetsCard({ budgets, availableModels, onAdd, onDelete }) {
                     <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${st.badge}`}>
                       {st.label}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(b.id)}
-                      className="text-xs text-gray-500 transition-colors hover:text-rose-400"
-                    >
-                      Delete
-                    </button>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(b.id)}
+                        className="text-xs text-gray-500 transition-colors hover:text-rose-400"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
@@ -1475,14 +1483,13 @@ export default function Analytics() {
 
       {daily.length >= 2 && <AlertsPanel alerts={alerts} onSelectDate={setSelectedDate} />}
 
-      {!IS_DEMO && (
-        <BudgetsCard
-          budgets={budgets}
-          availableModels={availableModels}
-          onAdd={addBudget}
-          onDelete={removeBudget}
-        />
-      )}
+      <BudgetsCard
+        budgets={budgets}
+        availableModels={availableModels}
+        onAdd={addBudget}
+        onDelete={removeBudget}
+        readOnly={IS_DEMO}
+      />
 
       <PercentilesCard percentiles={percentiles} />
 
@@ -1588,13 +1595,12 @@ export default function Analytics() {
         </div>
       )}
 
-      {!IS_DEMO && (
-        <AnnotationsCard
-          annotations={annotations}
-          onAdd={addAnnotation}
-          onDelete={removeAnnotation}
-        />
-      )}
+      <AnnotationsCard
+        annotations={annotations}
+        onAdd={addAnnotation}
+        onDelete={removeAnnotation}
+        readOnly={IS_DEMO}
+      />
     </div>
   );
 }

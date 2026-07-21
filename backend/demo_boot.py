@@ -38,12 +38,30 @@ def main() -> None:
         logger.info("Demo database already populated; skipping seed.")
         return
 
-    # ``seed`` builds its own app context and (with reset) drops/recreates the
-    # schema before populating it via the real engines/SDK.
+    # 1) Breadth: populate every navbar tab (Requests, Agent Runs, RAG,
+    #    Workflows, Conversations, Replays, Evaluations, Comparisons, Diffs).
+    #    ``seed`` builds its own app context and (with reset) drops/recreates the
+    #    schema before populating it via the real engines/SDK.
     from seed_demo import seed
 
-    logger.info("Seeding demo dataset (reset=%s)…", reset)
+    logger.info("Seeding platform demo dataset (reset=%s)…", reset)
     seed(reset=reset)
+
+    # 2) Depth: 90 days of analytics history with *planted regressions* (a quality
+    #    drop, a cost spike, a latency incident) plus the change annotations and
+    #    budgets that tie to them — so the Analytics Insights and "Investigate"
+    #    flow have real anomalies to detect and explain. Best-effort: a failure
+    #    here must not stop the server from coming up.
+    try:
+        from scripts.seed_demo import seed as seed_analytics
+
+        analytics_app = create_app()
+        with analytics_app.app_context():
+            seed_analytics(days=90, reset=False)
+        logger.info("Analytics history (regressions + annotations + budgets) seeded.")
+    except Exception:  # noqa: BLE001
+        logger.exception("analytics history seed failed; continuing without it")
+
     logger.info("Demo dataset ready.")
 
 
