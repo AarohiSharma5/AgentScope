@@ -26,31 +26,41 @@ export default function BarChart({
   // in that case the buttons carry the accessible labels, so the container is
   // no longer aria-hidden and the sr-only fallback table would be redundant.
   const interactive = typeof onSelect === "function";
+  // With many bars (e.g. a 90-day window), per-bar value/date text collapses
+  // into an unreadable smear. Past a threshold we drop the inline labels and
+  // fall back to first/last axis labels below — the value stays available on
+  // hover/focus (title + aria-label). Small charts keep their inline labels.
+  const dense = data.length > 24;
+  const gap = dense ? "gap-px" : "gap-2";
 
   return (
     <figure className="m-0" role="group" aria-label={label}>
-      <div className="flex items-end gap-2" style={{ height }} aria-hidden={!interactive}>
+      <div className={`flex items-end ${gap}`} style={{ height }} aria-hidden={!interactive}>
         {data.map((d, i) => {
           const value = d.value ?? 0;
           const pct = max ? (value / max) * 100 : 0;
           const selected = interactive && d.key != null && d.key === selectedKey;
           const inner = (
             <>
-              <span aria-hidden="true" className="text-[10px] text-gray-300">
-                {d.value == null ? "" : format(d.value)}
-              </span>
+              {!dense && (
+                <span aria-hidden="true" className="text-[10px] text-gray-300">
+                  {d.value == null ? "" : format(d.value)}
+                </span>
+              )}
               <div
                 className={`w-full rounded-t ${color} ${
                   selected ? "ring-2 ring-accent ring-offset-1 ring-offset-ink-700" : ""
                 }`}
                 style={{ height: `${pct}%`, minHeight: d.value ? 3 : 0 }}
               />
-              <span
-                aria-hidden="true"
-                className="w-full truncate text-center text-[10px] text-gray-400"
-              >
-                {d.label}
-              </span>
+              {!dense && (
+                <span
+                  aria-hidden="true"
+                  className="w-full truncate text-center text-[10px] text-gray-400"
+                >
+                  {d.label}
+                </span>
+              )}
             </>
           );
           const shared = "flex min-w-0 flex-1 flex-col items-center justify-end gap-1";
@@ -82,6 +92,15 @@ export default function BarChart({
           );
         })}
       </div>
+      {dense && (
+        <div
+          className="mt-1 flex justify-between text-[10px] text-gray-400"
+          aria-hidden="true"
+        >
+          <span>{data[0]?.label}</span>
+          <span>{data[data.length - 1]?.label}</span>
+        </div>
+      )}
       {!interactive && <ChartFallbackTable caption={label} rows={rows} />}
     </figure>
   );

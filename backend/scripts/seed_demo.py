@@ -22,9 +22,10 @@ import random
 from datetime import timedelta
 
 from app import create_app
+from app.evaluation.evaluators import Metrics
 from app.extensions import db
 from app.models.agent_trace import AgentRun, AgentStatus, AgentStep
-from app.models.evaluation_trace import EvaluationRun
+from app.models.evaluation_trace import EvaluationMetric, EvaluationRun
 from app.models.trace import Trace, TraceStatus
 from app.models.workflow_trace import AgentNode, ConversationRun
 from app.services import annotation_service, budget_service
@@ -172,6 +173,27 @@ def _build_eval(when, model: str, prof: dict, rng: random.Random) -> list:
         created_at=when,
         agent_run=run,
     )
+    # Per-metric breakdown so the evaluation detail page shows a real radar and
+    # metric list (not "no metrics recorded"), and so the Analytics "Reliability"
+    # card's correctness/groundedness/faithfulness reflect this history. Each
+    # metric jitters around the overall score; a low overall (failure / the
+    # planted quality regression) drags the whole radar down, as it should.
+    def _metric(name: str, weight: float, notes: str) -> EvaluationMetric:
+        val = _clamp(rng.gauss(score, 0.06), 0.02, 0.99)
+        return EvaluationMetric(
+            metric_name=name,
+            metric_value=round(val, 4),
+            weight=weight,
+            notes=notes,
+            created_at=when,
+        )
+
+    metrics = [
+        _metric(Metrics.CORRECTNESS, 1.0, "Overlap with the reference answer's key facts."),
+        _metric(Metrics.GROUNDEDNESS, 1.0, "Claims supported by the provided context."),
+        _metric(Metrics.FAITHFULNESS, 1.0, "No contradictions with the source material."),
+        _metric(Metrics.ANSWER_RELEVANCE, 0.5, "Directly addresses the user's question."),
+    ]
     ev = EvaluationRun(
         evaluation_type="quality",
         model_name="gpt-4o (judge)",
@@ -181,8 +203,9 @@ def _build_eval(when, model: str, prof: dict, rng: random.Random) -> list:
         finished_at=when + timedelta(seconds=2),
         created_at=when,
         conversation_run=conv,
+        metrics=metrics,
     )
-    return [trace, conv, run, node, step, ev]
+    return [trace, conv, run, node, step, ev, *metrics]
 
 
 def _profile_for(model: str, days_ago: int) -> dict:
