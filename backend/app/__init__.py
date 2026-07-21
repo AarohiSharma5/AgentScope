@@ -150,6 +150,16 @@ def _verify_security_posture(app: Flask) -> None:
     is_production = app.config.get("IS_PRODUCTION")
     auth_enabled = app.config.get("AUTH_ENABLED")
 
+    # A demo instance is intentionally public *and* read-only (all writes are
+    # rejected — see ``_register_demo_mode``), so running it without auth is safe
+    # by design even in production. Let it boot, but say so loudly in the logs.
+    if app.config.get("DEMO_MODE"):
+        logging.getLogger("agentscope").warning(
+            "DEMO_MODE is ON: public, READ-ONLY instance — all mutating requests "
+            "are rejected and authentication is not enforced."
+        )
+        return
+
     if is_production and not auth_enabled:
         raise RuntimeError(
             "AGENTSCOPE_ENV=production requires AUTH_ENABLED=true: refusing to "
@@ -198,6 +208,38 @@ def _register_auth_enforcement(app: Flask) -> None:
             raise AuthError()
         set_identity(identity)
         return None
+
+
+def _register_demo_mode(app: Flask) -> None:
+    """Make a ``DEMO_MODE`` instance strictly read-only.
+
+    A public showcase must let anyone browse but never let a stranger mutate or
+    poison it. This rejects every unsafe HTTP method (anything other than GET /
+    HEAD / OPTIONS) on ``/api`` routes with 403 — covering writes, ingest, OTLP
+    and login in one place — while leaving all read paths (lists, details,
+    analytics, the SSE/WebSocket stream, which are GETs) fully functional.
+    """
+    if not app.config.get("DEMO_MODE"):
+        return
+
+    from flask import jsonify
+
+    _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+    @app.before_request
+    def _enforce_read_only():
+        if request.method in _SAFE_METHODS:
+            return None
+        if not request.path.startswith("/api/"):
+            return None
+        resp = jsonify(
+            {
+                "error": "read_only_demo",
+                "message": "This is a public read-only demo; writes are disabled.",
+            }
+        )
+        resp.status_code = 403
+        return resp
 
 
 def _register_websocket(app: Flask) -> None:
@@ -292,6 +334,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         app.register_blueprint(bp, url_prefix="/api/v1", name=f"{bp.name}_v1")
     _register_websocket(app)
     register_request_logging(app)
+    _register_demo_mode(app)
     _register_auth_enforcement(app)
     register_error_handlers(app)
     register_auth_error_handlers(app)

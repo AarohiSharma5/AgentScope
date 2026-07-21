@@ -41,6 +41,18 @@ function NotFound() {
   );
 }
 
+function DemoBanner() {
+  if (import.meta.env.VITE_DEMO_MODE !== "true") return null;
+  return (
+    <div className="bg-amber-500/15 text-amber-200 border-b border-amber-500/30">
+      <div className="mx-auto max-w-6xl px-6 py-2 text-center text-xs sm:text-sm">
+        <span className="font-medium">Live demo</span> — read-only, seeded with
+        sample data that resets periodically. Explore freely; changes are disabled.
+      </div>
+    </div>
+  );
+}
+
 function NavItem({ to, label, end }) {
   return (
     <NavLink
@@ -110,6 +122,7 @@ export default function App() {
       >
         Skip to content
       </a>
+      <DemoBanner />
       <header className="sticky top-0 z-10 border-b border-ink-500 bg-ink-800/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-6">

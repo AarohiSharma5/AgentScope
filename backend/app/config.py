@@ -81,6 +81,19 @@ class Config:
     ).strip().lower()
     IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
 
+    # -- Demo mode ----------------------------------------------------------
+    # A public, read-only showcase (e.g. a free Render instance linked in a
+    # cold-outreach email). When on:
+    #   * every mutating request (POST/PUT/PATCH/DELETE — writes, ingest, OTLP,
+    #     login) is rejected with 403, so a visitor can browse but not alter it;
+    #   * auth is not required (visitors explore instantly, safe because it's
+    #     read-only) and the boot security guard permits this by design;
+    #   * ``demo_boot.py`` seeds the database on start.
+    # ``DEMO_RESET_ON_BOOT`` wipes and reseeds on each boot — pairs well with a
+    # free host that spins down when idle, keeping the demo pristine.
+    DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+    DEMO_RESET_ON_BOOT = os.getenv("DEMO_RESET_ON_BOOT", "false").lower() == "true"
+
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 
     # Prefer PostgreSQL via DATABASE_URL; fall back to SQLite for zero-config dev.

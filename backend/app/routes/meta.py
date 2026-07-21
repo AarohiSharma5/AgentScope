@@ -3,7 +3,7 @@
 Mounted at both ``/api`` (unversioned alias) and ``/api/v1`` so the docs and
 health probe are reachable regardless of which prefix a client uses.
 """
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 
 from ..openapi import get_spec, swagger_ui_html
 from ..version import API_VERSION, SUPPORTED_API_VERSIONS, __version__
@@ -19,13 +19,18 @@ def health():
 
 @meta_bp.get("/version")
 def version():
-    """Return service and API version metadata (unauthenticated)."""
+    """Return service and API version metadata (unauthenticated).
+
+    Includes ``demo`` so clients can surface a "read-only demo" banner without
+    any extra configuration.
+    """
     return jsonify(
         {
             "service": "agentscope",
             "version": __version__,
             "api_version": API_VERSION,
             "supported_api_versions": list(SUPPORTED_API_VERSIONS),
+            "demo": bool(current_app.config.get("DEMO_MODE")),
         }
     )
 

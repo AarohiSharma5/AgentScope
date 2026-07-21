@@ -1,0 +1,57 @@
+# Render Blueprint for a FREE, public, read-only AgentScope demo.
+#
+# One-time setup after connecting this repo as a Blueprint in Render:
+#   1. Create a free Postgres elsewhere (Neon / Supabase — Render's free DB
+#      expires after 90 days) and copy its connection string.
+#   2. In the Render dashboard set the values marked `sync: false` below:
+#        agentscope-demo-api:  DATABASE_URL, CORS_ORIGINS
+#        agentscope-demo-web:  VITE_API_BASE_URL
+#      (You'll know the service URLs after the first deploy; set CORS_ORIGINS to
+#       the web URL and VITE_API_BASE_URL to the api URL + "/api", then redeploy.)
+#
+# Notes
+#  * Free web services spin down when idle; the first request after that wakes
+#    them (~30–50s). With DEMO_RESET_ON_BOOT=true that wake reseeds a pristine
+#    demo — which is exactly the "resets periodically" behaviour we want.
+#  * The API runs a single threaded worker on purpose (in-process live-stream
+#    hub); no Redis needed for a demo.
+
+services:
+  # --- Backend API (Flask + gunicorn, via the existing Dockerfile) ---
+  - type: web
+    name: agentscope-demo-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    # Seed the demo DB once, then start the server (bind to Render's $PORT).
+    dockerCommand: >-
+      sh -c "python demo_boot.py &&
+      gunicorn -b 0.0.0.0:$PORT -k gthread -w 1 --threads 32 --timeout 120 run:app"
+    envVars:
+      - key: DEMO_MODE
+        value: "true"
+      - key: DEMO_RESET_ON_BOOT
+        value: "true"
+      - key: DATABASE_URL
+        sync: false # paste your Neon/Supabase Postgres URL in the dashboard
+      - key: CORS_ORIGINS
+        sync: false # the web URL, e.g. https://agentscope-demo-web.onrender.com
+
+  # --- Frontend (static Vite build served by Render's CDN) ---
+  - type: web
+    name: agentscope-demo-web
+    runtime: static
+    rootDir: ./frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_DEMO_MODE
+        value: "true"
+      - key: VITE_API_BASE_URL
+        sync: false # the api URL + /api, e.g. https://agentscope-demo-api.onrender.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
