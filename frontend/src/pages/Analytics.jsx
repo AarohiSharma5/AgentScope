@@ -59,11 +59,10 @@ function RangePicker({ value, onChange, disabled }) {
   );
 }
 
-// Percent change of a metric between the earlier and the recent half of the
-// selected window. `pick` reads the metric off a daily bucket; buckets are
-// weighted by their evaluation count so busy days count more than quiet ones.
+// Evaluation-count-weighted averages of a metric over the earlier vs. the
+// recent half of the selected window. Busy days count more than quiet ones.
 // Returns null when there isn't enough data on both sides to compare.
-function trendPct(daily, pick) {
+function halfAverages(daily, pick) {
   if (!daily || daily.length < 2) return null;
   const mid = Math.floor(daily.length / 2);
   const wavg = (rows) => {
@@ -80,8 +79,94 @@ function trendPct(daily, pick) {
   };
   const earlier = wavg(daily.slice(0, mid));
   const recent = wavg(daily.slice(mid));
-  if (earlier == null || recent == null || earlier === 0) return null;
-  return (recent - earlier) / Math.abs(earlier);
+  if (earlier == null || recent == null) return null;
+  return { earlier, recent };
+}
+
+// Percent change of a metric between the earlier and recent halves.
+function trendPct(daily, pick) {
+  const h = halfAverages(daily, pick);
+  if (!h || h.earlier === 0) return null;
+  return (h.recent - h.earlier) / Math.abs(h.earlier);
+}
+
+// Date of the day with the min/max value of a metric (for "inspect worst day").
+function worstDay(daily, pick, mode) {
+  let best = null;
+  for (const d of daily) {
+    const v = pick(d);
+    if (v == null) continue;
+    if (!best || (mode === "max" ? v > best.v : v < best.v)) best = { date: d.date, v };
+  }
+  return best ? best.date : null;
+}
+
+// Derive regression alerts from the daily series. Quality uses a relative drop,
+// failure rate an absolute jump in percentage points, cost/latency a relative
+// rise. Each alert carries the worst day so the UI can drill into it.
+function buildAlerts(daily) {
+  const alerts = [];
+  if (!daily || daily.length < 2) return alerts;
+
+  const s = halfAverages(daily, (d) => d.evaluation_score);
+  if (s && s.earlier > 0) {
+    const drop = (s.earlier - s.recent) / s.earlier;
+    if (drop >= 0.05) {
+      alerts.push({
+        id: "score",
+        severity: drop >= 0.15 ? "crit" : "warn",
+        title: "Quality regression.",
+        msg: `Average score fell ${Math.round(drop * 100)}% vs. earlier in this period.`,
+        date: worstDay(daily, (d) => d.evaluation_score, "min"),
+      });
+    }
+  }
+
+  const f = halfAverages(daily, (d) => d.failure_rate);
+  if (f) {
+    const inc = f.recent - f.earlier;
+    if (inc >= 0.05) {
+      alerts.push({
+        id: "failure",
+        severity: inc >= 0.15 ? "crit" : "warn",
+        title: "Failure-rate spike.",
+        msg: `Failure rate rose ${Math.round(inc * 100)} points vs. earlier.`,
+        date: worstDay(daily, (d) => d.failure_rate, "max"),
+      });
+    }
+  }
+
+  const c = halfAverages(daily, (d) => (d.evaluations ? d.cost / d.evaluations : null));
+  if (c && c.earlier > 0) {
+    const inc = (c.recent - c.earlier) / c.earlier;
+    if (inc >= 0.2) {
+      alerts.push({
+        id: "cost",
+        severity: inc >= 0.5 ? "crit" : "warn",
+        title: "Cost spike.",
+        msg: `Average cost per evaluation rose ${Math.round(inc * 100)}% vs. earlier.`,
+        date: worstDay(daily, (d) => (d.evaluations ? d.cost / d.evaluations : null), "max"),
+      });
+    }
+  }
+
+  const l = halfAverages(daily, (d) => d.latency_ms);
+  if (l && l.earlier > 0) {
+    const inc = (l.recent - l.earlier) / l.earlier;
+    if (inc >= 0.2) {
+      alerts.push({
+        id: "latency",
+        severity: inc >= 0.5 ? "crit" : "warn",
+        title: "Latency spike.",
+        msg: `Average latency rose ${Math.round(inc * 100)}% vs. earlier.`,
+        date: worstDay(daily, (d) => d.latency_ms, "max"),
+      });
+    }
+  }
+
+  // Most severe first.
+  alerts.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "crit" ? -1 : 1));
+  return alerts;
 }
 
 // Colored ▲/▼ indicator. `goodDirection` says which way is an improvement so we
@@ -230,6 +315,50 @@ function ModelBreakdown({ rows }) {
   );
 }
 
+// Regression alerts (or an all-clear). Each alert is clickable to jump to the
+// worst day behind it, reusing the day-drill-down selection.
+function AlertsPanel({ alerts, onSelectDate }) {
+  if (alerts.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
+        <span aria-hidden="true">✓</span>
+        No regressions detected in this period.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" role="list" aria-label="Regression alerts">
+      {alerts.map((a) => {
+        const crit = a.severity === "crit";
+        const tone = crit
+          ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-200";
+        const dot = crit ? "bg-rose-400" : "bg-amber-400";
+        return (
+          <button
+            key={a.id}
+            type="button"
+            role="listitem"
+            onClick={a.date ? () => onSelectDate(a.date) : undefined}
+            className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left text-sm ${tone} ${
+              a.date ? "transition-opacity hover:opacity-90" : "cursor-default"
+            }`}
+          >
+            <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
+            <span>
+              <span className="font-medium">{a.title}</span>{" "}
+              <span className="opacity-80">{a.msg}</span>
+              {a.date && (
+                <span className="ml-1 text-xs opacity-60">· click to inspect worst day</span>
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Breakdown of a single day, shown when a chart point is clicked.
 function DayDetail({ day, onClear }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
@@ -335,6 +464,7 @@ export default function Analytics() {
   const latencyTrend = trendPct(daily, (d) => d.latency_ms);
   const failureTrend = trendPct(daily, (d) => d.failure_rate);
   const successTrend = trendPct(daily, (d) => (d.evaluations == null ? null : 1 - d.failure_rate));
+  const alerts = buildAlerts(daily);
 
   // Evaluations actually recorded inside the selected window (the daily series
   // is window-bounded, unlike the all-time `totals.total_evaluations`).
@@ -438,6 +568,8 @@ export default function Analytics() {
           sublabel={allTimeNote}
         />
       </div>
+
+      {daily.length >= 2 && <AlertsPanel alerts={alerts} onSelectDate={setSelectedDate} />}
 
       {byModel.length > 0 && <ModelBreakdown rows={byModel} />}
 
