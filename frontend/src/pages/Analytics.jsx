@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client.js";
+import { useEventStream } from "../lib/useEventStream.js";
 import StatCard from "../components/StatCard.jsx";
 import Card from "../components/ui/Card.jsx";
 import Loading from "../components/ui/Loading.jsx";
@@ -57,6 +58,38 @@ function RangePicker({ value, onChange, disabled }) {
         </button>
       ))}
     </div>
+  );
+}
+
+// Toggles real-time mode. When on, the page subscribes to the evaluation event
+// stream and auto-refreshes as new evaluations complete. The dot reflects the
+// live SSE connection: pulsing green when streaming, amber while connecting.
+function LiveToggle({ live, status, onToggle }) {
+  const connected = status === "open";
+  const dot = !live
+    ? "bg-gray-500"
+    : connected
+      ? "bg-emerald-400 animate-pulse"
+      : "bg-amber-400 animate-pulse";
+  const text = !live ? "Go live" : connected ? "Live" : "Connecting…";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={
+        live
+          ? "Auto-refreshing as evaluations complete. Click to stop."
+          : "Auto-refresh the dashboard as new evaluations complete."
+      }
+      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${
+        live
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+          : "border-ink-500 bg-ink-700 text-gray-400 hover:text-gray-200"
+      }`}
+    >
+      <span className={`h-2 w-2 rounded-full ${dot}`} />
+      {text}
+    </button>
   );
 }
 
@@ -842,13 +875,35 @@ export default function Analytics() {
   const [annoVersion, setAnnoVersion] = useState(0);
   const [budgets, setBudgets] = useState([]);
   const [budgetVersion, setBudgetVersion] = useState(0);
+  const [live, setLive] = useState(false);
+  const [liveTick, setLiveTick] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  // Real-time mode: subscribe to the evaluation stream and, when new evaluations
+  // land, bump `liveTick` (debounced) to re-pull every data source. Debouncing
+  // collapses a burst of completions into a single refresh. The hook is paused
+  // (no connection) unless live mode is on.
+  const liveTimer = useRef(null);
+  const { status: liveStatus } = useEventStream({
+    topics: ["evaluation"],
+    paused: !live,
+    onEvent: () => {
+      if (liveTimer.current) clearTimeout(liveTimer.current);
+      liveTimer.current = setTimeout(() => setLiveTick((t) => t + 1), 1200);
+    },
+  });
 
   useEffect(() => {
     let active = true;
     setRefreshing(true);
     api
       .getEvaluationAnalytics({ days, model })
-      .then((data) => active && setAnalytics(data))
+      .then((data) => {
+        if (active) {
+          setAnalytics(data);
+          setLastUpdated(Date.now());
+        }
+      })
       .catch((e) => active && setError(e.message))
       .finally(() => {
         if (active) {
@@ -859,7 +914,7 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [days, model]);
+  }, [days, model, liveTick]);
 
   useEffect(() => {
     let active = true;
@@ -870,7 +925,7 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [days, annoVersion]);
+  }, [days, annoVersion, liveTick]);
 
   const addAnnotation = async (payload) => {
     await api.createAnnotation(payload);
@@ -893,7 +948,7 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [budgetVersion]);
+  }, [budgetVersion, liveTick]);
 
   const addBudget = async (payload) => {
     await api.createBudget(payload);
@@ -1001,6 +1056,17 @@ export default function Analytics() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {lastUpdated && (
+            <span className="text-xs text-gray-500">
+              Updated{" "}
+              {new Date(lastUpdated).toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </span>
+          )}
+          <LiveToggle live={live} status={liveStatus} onToggle={() => setLive((v) => !v)} />
           <ModelPicker
             value={model}
             options={availableModels}
