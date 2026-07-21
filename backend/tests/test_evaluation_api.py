@@ -210,6 +210,31 @@ def test_evaluation_analytics_dashboard(client, conversation):
         assert key in model_row
     assert model_row["evaluations"] == 1
 
+    # Latency/cost percentiles (p50/p95/p99) over evaluated conversations.
+    assert "percentiles" in data
+    for metric in ("latency_ms", "cost"):
+        assert set(data["percentiles"][metric]) == {"p50", "p95", "p99"}
+    assert data["percentiles"]["cost"]["p50"] == 0.01
+
+    # The generating model is surfaced for the whole-page model filter.
+    assert "available_models" in data
+    generating_model = model_row["model"]
+    assert generating_model in data["available_models"]
+
+    # Filtering to that model keeps the series; filtering to a bogus one empties
+    # the time-series/headline while the option list (all models) is unchanged.
+    scoped = client.get(
+        f"/api/dashboard/evaluation-analytics?model={generating_model}"
+    ).get_json()
+    assert scoped["model"] == generating_model
+    assert len(scoped["daily"]) == 1
+    assert scoped["totals"]["total_evaluations"] == 1
+
+    empty = client.get("/api/dashboard/evaluation-analytics?model=nope").get_json()
+    assert empty["daily"] == []
+    assert empty["totals"]["total_evaluations"] == 0
+    assert empty["available_models"] == data["available_models"]
+
 
 def test_evaluation_analytics_aggregation_and_date_bounds(app_ctx):
     """Daily aggregation is correct and ``days`` bounds the window (H6).

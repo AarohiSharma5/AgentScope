@@ -453,7 +453,8 @@ def evaluation_analytics():
 
     The series is bounded to the last ``?days=N`` days (default 90, capped at
     365) so a growing history can't turn one dashboard load into an unbounded
-    scan. Pass ``days=0`` for all history.
+    scan. Pass ``days=0`` for all history. ``?model=`` scopes the time-series,
+    headline block and percentiles to a single generating model.
     """
     try:
         days = _int_arg("days")
@@ -465,4 +466,5 @@ def evaluation_analytics():
         days = None  # all history
     else:
         days = min(days, 365)
-    return jsonify(evaluation_service.get_evaluation_analytics(days=days))
+    model = (request.args.get("model") or "").strip() or None
+    return jsonify(evaluation_service.get_evaluation_analytics(days=days, model=model))

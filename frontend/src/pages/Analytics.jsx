@@ -60,6 +60,32 @@ function RangePicker({ value, onChange, disabled }) {
   );
 }
 
+// Scopes the whole page (time-series, headline cards, percentiles) to a single
+// generating model. Empty value means "all models". Options come from the
+// backend's unfiltered `available_models`, so the list stays stable regardless
+// of the current selection.
+function ModelPicker({ value, options, onChange, disabled }) {
+  if (!options || options.length === 0) return null;
+  return (
+    <label className="inline-flex items-center gap-2 text-xs text-gray-400">
+      <span>Model</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-ink-500 bg-ink-700 px-2 py-1 text-xs font-medium text-gray-200 disabled:opacity-50"
+      >
+        <option value="">All models</option>
+        {options.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 // Evaluation-count-weighted averages of a metric over the earlier vs. the
 // recent half of the selected window. Busy days count more than quiet ones.
 // Returns null when there isn't enough data on both sides to compare.
@@ -227,7 +253,7 @@ function qualityPerDollar(row) {
 
 // Per-model comparison table. Highlights the highest-scoring, cheapest and
 // best-value models so the cost/quality trade-off is obvious at a glance.
-function ModelBreakdown({ rows }) {
+function ModelBreakdown({ rows, highlightModel }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
   const scored = rows.filter((r) => r.average_evaluation_score != null);
   const bestScore = scored.length
@@ -267,8 +293,14 @@ function ModelBreakdown({ rows }) {
               const isBestCost = bestCost != null && r.average_cost === bestCost;
               const value = qualityPerDollar(r);
               const isBestValue = bestValue != null && value === bestValue;
+              const isSelected = highlightModel && r.model === highlightModel;
               return (
-                <tr key={r.model} className="border-b border-ink-600/50 last:border-0">
+                <tr
+                  key={r.model}
+                  className={`border-b border-ink-600/50 last:border-0 ${
+                    isSelected ? "bg-accent/10" : ""
+                  }`}
+                >
                   <td className="py-2 pr-4 font-mono text-gray-200">{r.model}</td>
                   <td className="py-2 pr-4 text-gray-400">{providerOf(r.model)}</td>
                   <td className="py-2 pr-4 text-right text-gray-300">
@@ -309,6 +341,76 @@ function ModelBreakdown({ rows }) {
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// p50/p95/p99 of latency and per-conversation cost. The tail (p95/p99) surfaces
+// the worst-case pain that a single average hides.
+function PercentilesCard({ percentiles }) {
+  const lat = percentiles.latency_ms || {};
+  const cost = percentiles.cost || {};
+  const hasData = [lat.p50, lat.p95, lat.p99, cost.p50, cost.p95, cost.p99].some(
+    (v) => v != null
+  );
+  if (!hasData) return null;
+  const cell = "py-2 pr-4 text-right text-gray-300";
+  return (
+    <Card className="p-5">
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-gray-200">Latency &amp; Cost Distribution</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Percentiles across evaluated conversations — the tail (p95/p99) reveals worst-case
+          pain that averages hide.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-ink-500 text-left text-xs uppercase tracking-wider text-gray-500">
+              <th className="py-2 pr-4 font-medium">Metric</th>
+              <th
+                className="py-2 pr-4 text-right font-medium"
+                title="Median — half of conversations were faster/cheaper than this. The typical experience."
+              >
+                <span className="cursor-help underline decoration-dotted underline-offset-2">
+                  p50 (median)
+                </span>
+              </th>
+              <th
+                className="py-2 pr-4 text-right font-medium"
+                title="95% of conversations were faster/cheaper than this — your worst 5% (the tail engineers watch)."
+              >
+                <span className="cursor-help underline decoration-dotted underline-offset-2">
+                  p95
+                </span>
+              </th>
+              <th
+                className="py-2 text-right font-medium"
+                title="99% of conversations were faster/cheaper than this — the absolute worst 1%."
+              >
+                <span className="cursor-help underline decoration-dotted underline-offset-2">
+                  p99
+                </span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-ink-600/50">
+              <td className="py-2 pr-4 text-gray-200">Latency</td>
+              <td className={cell}>{fmtLatency(lat.p50)}</td>
+              <td className={cell}>{fmtLatency(lat.p95)}</td>
+              <td className="py-2 text-right text-gray-300">{fmtLatency(lat.p99)}</td>
+            </tr>
+            <tr>
+              <td className="py-2 pr-4 text-gray-200">Cost / conversation</td>
+              <td className={cell}>{fmtCost(cost.p50)}</td>
+              <td className={cell}>{fmtCost(cost.p95)}</td>
+              <td className="py-2 text-right text-gray-300">{fmtCost(cost.p99)}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -463,6 +565,9 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
                 {a.description && <p className="mt-0.5 text-xs text-gray-500">{a.description}</p>}
               </div>
               <div className="flex shrink-0 items-center gap-3">
+                {/* TODO(backlog): deep-link to the conversations from this
+                    annotation's day so Investigate can pre-select one to compare
+                    (annotation date -> conversation list -> one-click isolate). */}
                 <Link
                   to={`/comparisons?label=${encodeURIComponent(a.label)}&since=${a.date}`}
                   className="text-xs text-accent transition-colors hover:underline"
@@ -538,6 +643,7 @@ export default function Analytics() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [days, setDays] = useState(90);
+  const [model, setModel] = useState("");
   const [selectedDate, setSelectedDate] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [annoVersion, setAnnoVersion] = useState(0);
@@ -546,7 +652,7 @@ export default function Analytics() {
     let active = true;
     setRefreshing(true);
     api
-      .getEvaluationAnalytics({ days })
+      .getEvaluationAnalytics({ days, model })
       .then((data) => active && setAnalytics(data))
       .catch((e) => active && setError(e.message))
       .finally(() => {
@@ -558,7 +664,7 @@ export default function Analytics() {
     return () => {
       active = false;
     };
-  }, [days]);
+  }, [days, model]);
 
   useEffect(() => {
     let active = true;
@@ -588,6 +694,13 @@ export default function Analytics() {
   const totals = analytics?.totals || {};
   const daily = analytics?.daily || [];
   const byModel = analytics?.by_model || [];
+  const percentiles = analytics?.percentiles || {};
+  // Dropdown options: the backend's unfiltered model list, plus the current
+  // selection if it happens to have no data in the window (so the <select>
+  // never shows a value that isn't in its options).
+  const availableModels = [
+    ...new Set([...(analytics?.available_models || []), ...(model ? [model] : [])]),
+  ].sort();
   // Models plottable on the cost/quality quadrant (need both dimensions),
   // colored by provider so the cross-provider comparison is visual.
   const costQuality = byModel
@@ -664,17 +777,30 @@ export default function Analytics() {
         <div>
           <h1 className="text-xl font-semibold text-gray-100">Analytics</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Cost, latency, quality and reliability trends across your evaluations.
+            {model
+              ? `Trends scoped to ${model}. The comparison tables below still span all models.`
+              : "Cost, latency, quality and reliability trends across your evaluations."}
           </p>
         </div>
-        <RangePicker
-          value={days}
-          onChange={(d) => {
-            setSelectedDate(null);
-            setDays(d);
-          }}
-          disabled={refreshing}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <ModelPicker
+            value={model}
+            options={availableModels}
+            onChange={(m) => {
+              setSelectedDate(null);
+              setModel(m);
+            }}
+            disabled={refreshing}
+          />
+          <RangePicker
+            value={days}
+            onChange={(d) => {
+              setSelectedDate(null);
+              setDays(d);
+            }}
+            disabled={refreshing}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -722,7 +848,9 @@ export default function Analytics() {
 
       {daily.length >= 2 && <AlertsPanel alerts={alerts} onSelectDate={setSelectedDate} />}
 
-      {byModel.length > 0 && <ModelBreakdown rows={byModel} />}
+      <PercentilesCard percentiles={percentiles} />
+
+      {byModel.length > 0 && <ModelBreakdown rows={byModel} highlightModel={model} />}
 
       {costQuality.length > 0 && (
         <ChartCard
@@ -744,8 +872,12 @@ export default function Analytics() {
       {daily.length === 0 ? (
         <EmptyState
           icon="◔"
-          title="No analytics yet"
-          message="Run some evaluations to populate cost, latency and quality trends."
+          title={model ? "No data for this model" : "No analytics yet"}
+          message={
+            model
+              ? `No evaluations for ${model} in the selected period. Try a wider range or "All models".`
+              : "Run some evaluations to populate cost, latency and quality trends."
+          }
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">

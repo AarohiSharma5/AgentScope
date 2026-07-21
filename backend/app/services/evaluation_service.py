@@ -231,39 +231,62 @@ def list_evaluation_runs(
 # -- Dashboard aggregation --------------------------------------------------
 
 
-def get_evaluation_metrics() -> dict:
+def _model_conversation_ids(model: str):
+    """Conversation-run ids whose originating request used ``model``.
+
+    Used as an ``IN`` subquery to scope evaluation aggregations to a single
+    *generating* model (the model that produced the conversation, taken from the
+    originating request ``Trace``) rather than the judge model on the run.
+    """
+    return (
+        db.session.query(ConversationRun.id)
+        .join(Trace, ConversationRun.request_trace_id == Trace.id)
+        .filter(Trace.model_name == model)
+    )
+
+
+def get_evaluation_metrics(model: Optional[str] = None) -> dict:
     """Aggregate evaluation metrics for the dashboard.
 
     Returns average overall score, average conversation cost/latency (over the
     evaluated conversations), the average of key per-metric scores (correctness,
     faithfulness, groundedness, tool accuracy, memory usage) and the evaluation
-    success rate.
+    success rate. When ``model`` is given, everything is scoped to evaluations of
+    conversations produced by that generating model.
     """
     org_id = _tenant_scope()
-    total = _scoped(
-        db.session.query(func.count(EvaluationRun.id)), EvaluationRun.organization_id
-    ).scalar() or 0
+    conv_filter = (
+        EvaluationRun.conversation_run_id.in_(_model_conversation_ids(model))
+        if model
+        else None
+    )
+
+    def scoped(query):
+        query = _scoped(query, EvaluationRun.organization_id)
+        if conv_filter is not None:
+            query = query.filter(conv_filter)
+        return query
+
+    total = scoped(db.session.query(func.count(EvaluationRun.id))).scalar() or 0
     success = (
-        _scoped(
-            db.session.query(func.count(EvaluationRun.id)),
-            EvaluationRun.organization_id,
-        )
+        scoped(db.session.query(func.count(EvaluationRun.id)))
         .filter(EvaluationRun.status == AgentStatus.SUCCESS)
         .scalar()
         or 0
     )
-    avg_score = _scoped(
-        db.session.query(func.avg(EvaluationRun.overall_score)),
-        EvaluationRun.organization_id,
-    ).scalar()
+    avg_score = scoped(db.session.query(func.avg(EvaluationRun.overall_score))).scalar()
 
     metric_query = db.session.query(
         EvaluationMetric.metric_name, func.avg(EvaluationMetric.metric_value)
     )
-    if org_id is not None:
+    if org_id is not None or conv_filter is not None:
         metric_query = metric_query.join(
             EvaluationRun, EvaluationMetric.evaluation_run_id == EvaluationRun.id
-        ).filter(EvaluationRun.organization_id == org_id)
+        )
+        if org_id is not None:
+            metric_query = metric_query.filter(EvaluationRun.organization_id == org_id)
+        if conv_filter is not None:
+            metric_query = metric_query.filter(conv_filter)
     metric_rows = metric_query.group_by(EvaluationMetric.metric_name).all()
     by_metric = {name: _round(value, 4) for name, value in metric_rows}
 
@@ -271,9 +294,8 @@ def get_evaluation_metrics() -> dict:
     # conversations* with a few set-based queries instead of looping
     # ``conversation_totals`` per conversation (which was N x ~3 queries and
     # grew linearly with history). ``conv_ids`` is reused as an ``IN`` subquery.
-    conv_ids = _scoped(
-        db.session.query(EvaluationRun.conversation_run_id),
-        EvaluationRun.organization_id,
+    conv_ids = scoped(
+        db.session.query(EvaluationRun.conversation_run_id)
     ).distinct()
     num_conversations = conv_ids.count()
 
@@ -312,7 +334,9 @@ def get_evaluation_metrics() -> dict:
     }
 
 
-def get_evaluation_analytics(days: Optional[int] = None) -> dict:
+def get_evaluation_analytics(
+    days: Optional[int] = None, model: Optional[str] = None
+) -> dict:
     """Build daily time-series analytics plus headline rates for the dashboard.
 
     Each evaluation run is bucketed by its creation date; per-day cost, tokens
@@ -326,12 +350,27 @@ def get_evaluation_analytics(days: Optional[int] = None) -> dict:
     per run. ``days`` optionally bounds the series to the last N days (``None``
     = all history); the dashboard route passes a sensible default so a growing
     history can never turn one dashboard load into an unbounded scan.
+
+    When ``model`` is given the time-series, headline block and percentiles are
+    scoped to that generating model, while the cross-model comparison views
+    (``by_model``, ``available_models``) always cover every model so the page
+    can still offer them for comparison.
     """
     since = utcnow() - timedelta(days=days) if days and days > 0 else None
     day = _day_expr(EvaluationRun.created_at)
+    conv_filter = (
+        EvaluationRun.conversation_run_id.in_(_model_conversation_ids(model))
+        if model
+        else None
+    )
+
+    def scope(query):
+        if conv_filter is not None:
+            query = query.filter(conv_filter)
+        return query
 
     # 1) Run-level per-day aggregates: count, failures and mean score. One query.
-    run_q = _scoped(
+    run_q = scope(_scoped(
         db.session.query(
             day.label("day"),
             func.count(EvaluationRun.id),
@@ -339,18 +378,18 @@ def get_evaluation_analytics(days: Optional[int] = None) -> dict:
             func.avg(EvaluationRun.overall_score),
         ),
         EvaluationRun.organization_id,
-    )
+    ))
     if since is not None:
         run_q = run_q.filter(EvaluationRun.created_at >= since)
     run_rows = run_q.group_by(day).all()
 
     # 2) Per-day mean conversation latency. One query (AVG ignores NULLs).
-    lat_q = _scoped(
+    lat_q = scope(_scoped(
         db.session.query(day.label("day"), func.avg(ConversationRun.latency_ms))
         .select_from(EvaluationRun)
         .join(ConversationRun, EvaluationRun.conversation_run_id == ConversationRun.id),
         EvaluationRun.organization_id,
-    )
+    ))
     if since is not None:
         lat_q = lat_q.filter(EvaluationRun.created_at >= since)
     latency_by_day = dict(lat_q.group_by(day).all())
@@ -359,13 +398,13 @@ def get_evaluation_analytics(days: Optional[int] = None) -> dict:
     #    SUM-able in SQL), so we pull the (day, cost, token_usage) rows for the
     #    evaluated conversations' steps in ONE date-bounded query and fold them
     #    in Python — no per-conversation fan-out.
-    ct_q = _scoped(
+    ct_q = scope(_scoped(
         db.session.query(day.label("day"), AgentStep.cost, AgentStep.token_usage)
         .select_from(EvaluationRun)
         .join(AgentNode, AgentNode.conversation_run_id == EvaluationRun.conversation_run_id)
         .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id),
         EvaluationRun.organization_id,
-    )
+    ))
     if since is not None:
         ct_q = ct_q.filter(EvaluationRun.created_at >= since)
 
@@ -396,9 +435,105 @@ def get_evaluation_analytics(days: Optional[int] = None) -> dict:
             }
         )
 
-    headline = get_evaluation_metrics()
+    headline = get_evaluation_metrics(model=model)
     headline["failure_rate"] = round(1 - headline["success_rate"], 4)
-    return {"daily": daily, "totals": headline, "by_model": _analytics_by_model(since)}
+    return {
+        "daily": daily,
+        "totals": headline,
+        "by_model": _analytics_by_model(since),
+        "percentiles": _analytics_percentiles(since, model),
+        "available_models": _available_models(since),
+        "model": model,
+    }
+
+
+def _available_models(since: Optional[datetime]) -> list[str]:
+    """Distinct generating models over the window (ignores any model filter).
+
+    Powers the model-filter dropdown, so the option list stays stable regardless
+    of which model is currently selected.
+    """
+    q = _scoped(
+        db.session.query(Trace.model_name)
+        .select_from(EvaluationRun)
+        .join(ConversationRun, EvaluationRun.conversation_run_id == ConversationRun.id)
+        .join(Trace, ConversationRun.request_trace_id == Trace.id),
+        EvaluationRun.organization_id,
+    )
+    if since is not None:
+        q = q.filter(EvaluationRun.created_at >= since)
+    return sorted({m for (m,) in q.distinct().all() if m})
+
+
+def _percentile(values: list[float], fraction: float) -> Optional[float]:
+    """Linear-interpolated percentile of ``values`` (``fraction`` in [0, 1]).
+
+    Computed in Python because the percentile SQL functions aren't portable
+    across SQLite and PostgreSQL; the input is already bounded to the window's
+    evaluated conversations, so the set is small.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    k = (len(ordered) - 1) * fraction
+    lo = int(k)
+    hi = min(lo + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
+def _analytics_percentiles(
+    since: Optional[datetime], model: Optional[str] = None
+) -> dict:
+    """p50/p95/p99 of per-conversation latency and cost over the window.
+
+    Percentiles expose the tail (worst-case) latency and cost that a simple
+    average hides — the p95/p99 a user actually feels. Computed over the
+    *distinct evaluated conversations* in the window (each counted once), scoped
+    to ``model`` when given.
+    """
+    conv_ids = _scoped(
+        db.session.query(EvaluationRun.conversation_run_id),
+        EvaluationRun.organization_id,
+    ).distinct()
+    if since is not None:
+        conv_ids = conv_ids.filter(EvaluationRun.created_at >= since)
+    if model:
+        conv_ids = conv_ids.filter(
+            EvaluationRun.conversation_run_id.in_(_model_conversation_ids(model))
+        )
+
+    # Per-conversation latency (each conversation once).
+    lat_rows = (
+        db.session.query(ConversationRun.latency_ms)
+        .filter(ConversationRun.id.in_(conv_ids), ConversationRun.latency_ms.isnot(None))
+        .all()
+    )
+    latencies = [r[0] for r in lat_rows]
+
+    # Per-conversation total cost (sum of its step costs).
+    cost_rows = (
+        db.session.query(
+            AgentNode.conversation_run_id,
+            func.coalesce(func.sum(AgentStep.cost), 0.0),
+        )
+        .select_from(AgentNode)
+        .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id)
+        .filter(AgentNode.conversation_run_id.in_(conv_ids))
+        .group_by(AgentNode.conversation_run_id)
+        .all()
+    )
+    costs = [c for _, c in cost_rows]
+
+    def dist(values: list[float], places: int) -> dict:
+        return {
+            "p50": _round(_percentile(values, 0.5), places),
+            "p95": _round(_percentile(values, 0.95), places),
+            "p99": _round(_percentile(values, 0.99), places),
+        }
+
+    return {"latency_ms": dist(latencies, 2), "cost": dist(costs, 6)}
 
 
 def _analytics_by_model(since: Optional[datetime]) -> list[dict]:
