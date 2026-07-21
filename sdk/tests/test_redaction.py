@@ -41,6 +41,24 @@ def test_redaction_scrubs_api_keys_and_bearer_tokens():
     assert "sk-abcdef0123456789ABCDEF" not in text
 
 
+def test_redaction_scrubs_expanded_secret_formats():
+    agentscope.configure(redact=True)
+    with trace("op") as span:
+        span.set_input(
+            "jwt eyJhbGciOi.J9body.sigZ aws AKIAIOSFODNN7EXAMPLE "
+            "gh ghp_" + "a" * 36 + " iban DE89370400440532013000"
+        )
+        span.set_output("password=hunter2 done")
+    root = _last().root
+    assert "[REDACTED_JWT]" in root.input
+    assert "[REDACTED_AWS_KEY]" in root.input
+    assert "[REDACTED_GITHUB_TOKEN]" in root.input
+    assert "[REDACTED_IBAN]" in root.input
+    # labelled secret keeps the label, scrubs the value
+    assert "hunter2" not in root.output and "[REDACTED_SECRET]" in root.output
+    assert "password" in root.output
+
+
 def test_redaction_preserves_model_attribute():
     agentscope.configure(redact=True)
     with trace.llm("gen", model="gpt-4o", system_prompt="email boss@corp.com") as span:

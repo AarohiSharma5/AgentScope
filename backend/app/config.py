@@ -54,6 +54,20 @@ def _load_json_env(name: str, default):
         return default
 
 
+def _load_list_env(name: str, default):
+    """Parse an env var as a JSON array or a comma-separated list of strings."""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    raw = raw.strip()
+    if raw.startswith("["):
+        parsed = _load_json_env(name, None)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+        return default
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 class Config:
     """Base configuration shared across environments."""
 
@@ -125,6 +139,10 @@ class Config:
     # persistence. Extend the built-ins via a JSON array of ``[regex, replacement]``.
     INGEST_REDACT = os.getenv("AGENTSCOPE_INGEST_REDACT", "false").lower() == "true"
     INGEST_REDACT_PATTERNS = _load_json_env("AGENTSCOPE_INGEST_REDACT_PATTERNS", [])
+    # Named pluggable detectors to run in addition to the regex patterns (e.g.
+    # an entity-based scrubber registered via ``redaction.register_detector``).
+    # Accepts a JSON array (``["presidio"]``) or a comma-separated list.
+    INGEST_REDACT_DETECTORS = _load_list_env("AGENTSCOPE_INGEST_REDACT_DETECTORS", [])
 
     # Cap COUNT(*) on very large tables to keep list endpoints fast. A list
     # response reports up to this many rows as its total (with a flag), avoiding

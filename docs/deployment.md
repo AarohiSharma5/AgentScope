@@ -118,6 +118,9 @@ isolation on the REST API).
 | `STREAM_HEARTBEAT_INTERVAL` | `15` | SSE/WebSocket heartbeat seconds. |
 | `STREAM_BROKER_URL` | _(unset)_ | Redis URL for cross-worker streaming fan-out; unset = single-worker in-process. |
 | `AGENTSCOPE_MODEL_PRICES` | _(unset)_ | Model prices (USD/1K tokens) as inline JSON or a file path; extends built-ins. |
+| `AGENTSCOPE_INGEST_REDACT` | `false` | Scrub PII/secrets from ingested text before it is stored. |
+| `AGENTSCOPE_INGEST_REDACT_PATTERNS` | _(unset)_ | Extra `[[regex, replacement], …]` patterns (JSON). |
+| `AGENTSCOPE_INGEST_REDACT_DETECTORS` | _(unset)_ | Named pluggable detectors to run (JSON array or comma list; see `redaction.register_detector`). |
 | `PLUGINS_AUTOLOAD` | `true` | Discover/enable plugins at startup. |
 | `PLUGINS_PACKAGES` | `app.plugins.builtins` | Packages scanned for plugins. |
 | `PLUGINS_ENTRYPOINT_GROUP` | `agentscope.plugins` | pip entry-point group for third-party plugins. |
