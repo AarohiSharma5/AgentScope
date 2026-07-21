@@ -20,12 +20,19 @@
 #    touches the database.
 set -e
 
-# Small head start so gunicorn's own create_app()/db.create_all() finishes first
-# on a brand-new (empty) database; by the time the seeder connects, the schema
-# already exists and its create_all() is a no-op — avoiding a concurrent
-# CREATE TABLE race. A no-op on an already-populated DB.
-( sleep 10; python demo_boot.py ) &
+# 1. Create/repair the schema *synchronously and single-threaded* first. Running
+#    create_all() from two processes at once (seeder + gunicorn worker) races on
+#    CREATE TABLE and kills the worker; doing it here, alone, before anything
+#    else, makes every later create_all() a no-op. Honors DEMO_RESET_ON_BOOT.
+python demo_boot.py schema || true
 
+# 2. Seed the *data* in the background. This phase never issues DDL, so it can
+#    safely run alongside the web server. Data trickles in over a few minutes
+#    without holding up startup or the health check.
+python demo_boot.py seed &
+
+# 3. Start the web server. It binds immediately (its create_all() is a no-op now)
+#    and answers GET /api/health — a static response that never touches the DB.
 exec gunicorn \
   -b "0.0.0.0:${PORT:-8000}" \
   -k gthread \
