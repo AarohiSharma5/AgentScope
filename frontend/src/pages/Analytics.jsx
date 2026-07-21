@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client.js";
 import StatCard from "../components/StatCard.jsx";
 import Card from "../components/ui/Card.jsx";
@@ -461,13 +462,22 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
                 <span className="ml-2 text-xs text-gray-500">{fmtDate(a.date)}</span>
                 {a.description && <p className="mt-0.5 text-xs text-gray-500">{a.description}</p>}
               </div>
-              <button
-                type="button"
-                onClick={() => onDelete(a.id)}
-                className="shrink-0 text-xs text-gray-500 transition-colors hover:text-rose-400"
-              >
-                Delete
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                <Link
+                  to={`/comparisons?label=${encodeURIComponent(a.label)}&since=${a.date}`}
+                  className="text-xs text-accent transition-colors hover:underline"
+                  title="Isolate this change by re-running a conversation across models"
+                >
+                  Investigate →
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => onDelete(a.id)}
+                  className="text-xs text-gray-500 transition-colors hover:text-rose-400"
+                >
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>

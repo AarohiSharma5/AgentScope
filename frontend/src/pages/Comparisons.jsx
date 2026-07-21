@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client.js";
 import ComparisonCard from "../components/eval/ComparisonCard.jsx";
 import SearchInput from "../components/SearchInput.jsx";
@@ -95,6 +96,11 @@ function NewComparisonForm({ onCreated }) {
 }
 
 export default function Comparisons() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Context passed from an analytics annotation's "Investigate" link.
+  const investigateLabel = searchParams.get("label");
+  const investigateSince = searchParams.get("since");
+
   const {
     data: comparisons,
     pagination,
@@ -112,6 +118,22 @@ export default function Comparisons() {
     reload();
   };
 
+  const clearInvestigation = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("label");
+    next.delete("since");
+    setSearchParams(next, { replace: true });
+  };
+
+  const fmtDate = (iso) =>
+    iso
+      ? new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "";
+
   return (
     <div className="space-y-6">
       <div>
@@ -120,6 +142,28 @@ export default function Comparisons() {
           Run a conversation against multiple models and compare them side by side.
         </p>
       </div>
+
+      {investigateLabel && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <span>
+            <span className="font-medium">Isolating change:</span> ⚑ {investigateLabel}
+            {investigateSince && (
+              <span className="opacity-80"> · shipped {fmtDate(investigateSince)}</span>
+            )}
+            <span className="mt-0.5 block text-xs opacity-70">
+              Re-run one of that period&apos;s conversations across models below to see which
+              variable moved the metric.
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={clearInvestigation}
+            className="shrink-0 text-xs text-amber-200/80 transition-colors hover:text-amber-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <Section title="Run a comparison">
         <NewComparisonForm onCreated={refresh} />
