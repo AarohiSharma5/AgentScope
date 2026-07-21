@@ -29,7 +29,13 @@ from ..serializers.evaluation import (
     serialize_prompt_version,
     serialize_replay_run,
 )
-from ..services import diff_service, evaluation_service, prompt_service, replay_service
+from ..services import (
+    diff_service,
+    evaluation_service,
+    insight_service,
+    prompt_service,
+    replay_service,
+)
 from ..utils.pagination import PaginationError, paginated, parse_page_limit
 
 evaluations_bp = Blueprint("evaluations", __name__)
@@ -468,3 +474,37 @@ def evaluation_analytics():
         days = min(days, 365)
     model = (request.args.get("model") or "").strip() or None
     return jsonify(evaluation_service.get_evaluation_analytics(days=days, model=model))
+
+
+@evaluations_bp.get("/dashboard/evaluation-insights")
+def evaluation_insights():
+    """Return anomaly/trend findings + a summary of the analytics window.
+
+    Same ``?days=`` / ``?model=`` semantics as the analytics endpoint. The
+    heuristic findings and summary are always computed (no external calls). Pass
+    ``?ai=1`` to additionally request an LLM-generated narrative; if no provider
+    is configured the response falls back to the heuristic summary and reports
+    ``summary_source: "ai_unavailable"``.
+    """
+    try:
+        days = _int_arg("days")
+    except ValueError:
+        return error_response("days must be an integer", 400)
+    if days is None:
+        days = 90
+    elif days <= 0:
+        days = None  # all history
+    else:
+        days = min(days, 365)
+    model = (request.args.get("model") or "").strip() or None
+
+    data = insight_service.build_insights(days=days, model=model)
+
+    if (request.args.get("ai") or "").strip().lower() in ("1", "true", "yes"):
+        summary = insight_service.generate_ai_summary(data["digest"], data["findings"])
+        if summary:
+            data["summary"] = summary
+            data["summary_source"] = "ai"
+        else:
+            data["summary_source"] = "ai_unavailable"
+    return jsonify(data)

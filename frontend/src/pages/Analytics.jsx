@@ -624,6 +624,72 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
   );
 }
 
+const FINDING_DOT = {
+  crit: "bg-rose-400",
+  warn: "bg-amber-400",
+  info: "bg-sky-400",
+};
+
+// Executive summary of the current window: a plain-English narrative plus a list
+// of detected findings (regressions, anomalies, cost drivers, budget breaches).
+// The summary is heuristic by default; "Summarize with AI" swaps in an
+// LLM-written narrative when a provider is configured.
+function InsightsCard({ insights, onGenerateAI, aiBusy }) {
+  if (!insights) return null;
+  const { summary, summary_source: source, findings = [] } = insights;
+  const isAI = source === "ai";
+  return (
+    <Card className="p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-gray-200">Insights</h3>
+          {isAI && (
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase text-accent">
+              ✨ AI
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onGenerateAI}
+          disabled={aiBusy}
+          className="rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+        >
+          {aiBusy ? "Summarizing…" : "✨ Summarize with AI"}
+        </button>
+      </div>
+
+      <p className="text-sm leading-relaxed text-gray-300">{summary}</p>
+
+      {source === "ai_unavailable" && (
+        <p className="mt-2 text-xs text-amber-300/80">
+          No LLM provider configured — showing the heuristic summary. Set an API key (e.g.
+          <span className="font-mono"> OPENAI_API_KEY</span>) or
+          <span className="font-mono"> INSIGHTS_PROVIDER</span> to enable AI summaries.
+        </p>
+      )}
+
+      {findings.length > 0 && (
+        <ul className="mt-4 space-y-2">
+          {findings.map((f) => (
+            <li key={f.id} className="flex items-start gap-2 text-sm">
+              <span
+                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                  FINDING_DOT[f.severity] || "bg-gray-500"
+                }`}
+                aria-hidden="true"
+              />
+              <span className="text-gray-400">
+                <span className="text-gray-200">{f.title}.</span> {f.detail}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // Metric metadata for budgets: display label, value formatter, natural
 // guardrail direction and a placeholder hint for the threshold input.
 const pctFmt = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
@@ -878,6 +944,8 @@ export default function Analytics() {
   const [live, setLive] = useState(false);
   const [liveTick, setLiveTick] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [insights, setInsights] = useState(null);
+  const [insightsAiBusy, setInsightsAiBusy] = useState(false);
 
   // Real-time mode: subscribe to the evaluation stream and, when new evaluations
   // land, bump `liveTick` (debounced) to re-pull every data source. Debouncing
@@ -957,6 +1025,31 @@ export default function Analytics() {
   const removeBudget = async (id) => {
     await api.deleteBudget(id);
     setBudgetVersion((v) => v + 1);
+  };
+
+  // Heuristic insights refresh with the page filters and live stream. They never
+  // trigger an LLM call — that's on-demand via "Summarize with AI" below.
+  useEffect(() => {
+    let active = true;
+    api
+      .getEvaluationInsights({ days, model })
+      .then((r) => active && setInsights(r))
+      .catch(() => active && setInsights(null));
+    return () => {
+      active = false;
+    };
+  }, [days, model, liveTick]);
+
+  const generateAiInsights = async () => {
+    setInsightsAiBusy(true);
+    try {
+      const r = await api.getEvaluationInsights({ days, model, ai: 1 });
+      setInsights(r);
+    } catch {
+      // Keep the existing heuristic summary on failure.
+    } finally {
+      setInsightsAiBusy(false);
+    }
   };
 
   if (loading) return <Loading label="Loading analytics…" />;
@@ -1086,6 +1179,12 @@ export default function Analytics() {
           />
         </div>
       </div>
+
+      <InsightsCard
+        insights={insights}
+        onGenerateAI={generateAiInsights}
+        aiBusy={insightsAiBusy}
+      />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard

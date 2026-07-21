@@ -260,6 +260,8 @@ export const api = {
   getEvaluationMetrics: (opts) => request("/dashboard/evaluation-metrics", opts),
   getEvaluationAnalytics: (params, opts) =>
     request(`/dashboard/evaluation-analytics${buildQuery(params)}`, opts),
+  getEvaluationInsights: (params, opts) =>
+    request(`/dashboard/evaluation-insights${buildQuery(params)}`, opts),
 
   // Timeline annotations (deploy / change markers)
   getAnnotations: (params, opts) => request(`/annotations${buildQuery(params)}`, opts),
