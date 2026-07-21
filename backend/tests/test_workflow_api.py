@@ -110,6 +110,36 @@ def test_list_conversations_status_filter(client, seeded):
     assert client.get("/api/conversations?status=bogus").status_code == 400
 
 
+def test_list_conversations_day_filter(client, seeded):
+    """``on=YYYY-MM-DD`` bounds the list to a single calendar day (Investigate flow)."""
+    from datetime import timedelta
+
+    from app.utils.timeutils import utcnow
+
+    today = utcnow().date()
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
+    # The seeded conversation was created "now" -> present today, absent on other days.
+    assert client.get(f"/api/conversations?on={today.isoformat()}").get_json()[
+        "pagination"
+    ]["total"] == 1
+    assert client.get(f"/api/conversations?on={yesterday.isoformat()}").get_json()[
+        "pagination"
+    ]["total"] == 0
+
+    # since/until behave as a half-open [since, until) window on created_at.
+    assert client.get(f"/api/conversations?since={today.isoformat()}").get_json()[
+        "pagination"
+    ]["total"] == 1
+    assert client.get(f"/api/conversations?until={today.isoformat()}").get_json()[
+        "pagination"
+    ]["total"] == 0
+    assert client.get(f"/api/conversations?until={tomorrow.isoformat()}").get_json()[
+        "pagination"
+    ]["total"] == 1
+
+
 def test_list_conversation_counts_are_per_row(client, seeded, app):
     """Counts come from grouped subqueries and map to the right row (H7).
 

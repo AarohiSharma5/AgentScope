@@ -400,13 +400,16 @@ def list_conversations(
     q: Optional[str] = None,
     status: Optional[str] = None,
     sort: str = "-created_at",
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
 ) -> tuple[list[ConversationRun], int]:
     """Return a page of conversation runs and the total matching count.
 
     The list only needs each conversation's agent/message *counts*, so we avoid
     eager loading the full node tree and message bodies (whose size grows with
     conversation content) and attach index-backed ``func.count()`` values per
-    page instead.
+    page instead. ``since`` / ``until`` optionally bound ``created_at`` (used by
+    the "investigate a change" flow to fetch a specific day's conversations).
     """
     query = ConversationRun.query
     org_id = _tenant_scope()
@@ -414,6 +417,10 @@ def list_conversations(
         query = query.filter(ConversationRun.organization_id == org_id)
     if status is not None:
         query = query.filter(ConversationRun.status == status)
+    if since is not None:
+        query = query.filter(ConversationRun.created_at >= since)
+    if until is not None:
+        query = query.filter(ConversationRun.created_at < until)
     if q:
         like = f"%{q}%"
         query = query.filter(

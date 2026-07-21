@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client.js";
 import ComparisonCard from "../components/eval/ComparisonCard.jsx";
@@ -13,12 +13,23 @@ import { usePaginatedList } from "../lib/usePaginatedList.js";
 
 const LIMIT = 20;
 
-function NewComparisonForm({ onCreated }) {
+function NewComparisonForm({ onCreated, dayConversations, prefillConversationId }) {
   const [conversationId, setConversationId] = useState("");
   const [models, setModels] = useState("gpt-4o, gpt-4o-mini, claude-3-5-sonnet");
   const [evaluate, setEvaluate] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  // When the "Investigate" flow supplies a conversation from the changed day,
+  // preselect it so isolating a regression is one click, not manual data entry.
+  useEffect(() => {
+    if (prefillConversationId != null && prefillConversationId !== "") {
+      setConversationId(String(prefillConversationId));
+    }
+  }, [prefillConversationId]);
+
+  const dayList = Array.isArray(dayConversations) ? dayConversations : [];
+  const hasDayList = dayList.length > 0;
 
   async function submit(e) {
     e.preventDefault();
@@ -54,16 +65,41 @@ function NewComparisonForm({ onCreated }) {
   return (
     <Card className="p-5">
       <form onSubmit={submit} className="flex flex-col gap-3 md:flex-row md:items-end">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs uppercase tracking-wider text-gray-500">Conversation ID</span>
-          <input
-            type="number"
-            value={conversationId}
-            onChange={(e) => setConversationId(e.target.value)}
-            placeholder="e.g. 1"
-            className={`${input} w-full md:w-36`}
-          />
-        </label>
+        {hasDayList ? (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs uppercase tracking-wider text-gray-500">
+              Conversation from that day
+            </span>
+            <select
+              value={conversationId}
+              onChange={(e) => setConversationId(e.target.value)}
+              className={`${input} w-full md:w-72`}
+            >
+              {dayList.map((c) => (
+                <option key={c.id} value={c.id}>
+                  #{c.id} · {c.conversation_name || "conversation"} ·{" "}
+                  {c.created_at
+                    ? new Date(c.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs uppercase tracking-wider text-gray-500">Conversation ID</span>
+            <input
+              type="number"
+              value={conversationId}
+              onChange={(e) => setConversationId(e.target.value)}
+              placeholder="e.g. 1"
+              className={`${input} w-full md:w-36`}
+            />
+          </label>
+        )}
         <label className="flex flex-1 flex-col gap-1">
           <span className="text-xs uppercase tracking-wider text-gray-500">Models (comma-separated)</span>
           <input
@@ -100,6 +136,35 @@ export default function Comparisons() {
   // Context passed from an analytics annotation's "Investigate" link.
   const investigateLabel = searchParams.get("label");
   const investigateSince = searchParams.get("since");
+
+  // Conversations recorded on the changed day, for one-click isolation.
+  const [dayConversations, setDayConversations] = useState(null);
+  const [dayLoading, setDayLoading] = useState(false);
+
+  useEffect(() => {
+    if (!investigateSince) {
+      setDayConversations(null);
+      return;
+    }
+    let cancelled = false;
+    setDayLoading(true);
+    api
+      .getConversations({ on: investigateSince, sort: "-created_at", limit: 50 })
+      .then((res) => {
+        if (!cancelled) setDayConversations(res?.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setDayConversations([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDayLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [investigateSince]);
+
+  const prefillConversationId = dayConversations?.[0]?.id ?? null;
 
   const {
     data: comparisons,
@@ -151,8 +216,11 @@ export default function Comparisons() {
               <span className="opacity-80"> · shipped {fmtDate(investigateSince)}</span>
             )}
             <span className="mt-0.5 block text-xs opacity-70">
-              Re-run one of that period&apos;s conversations across models below to see which
-              variable moved the metric.
+              {dayLoading
+                ? "Finding that day's conversations…"
+                : dayConversations && dayConversations.length > 0
+                ? `Pre-selected a conversation from ${fmtDate(investigateSince)} below — hit “Compare models” to see which variable moved the metric.`
+                : "No conversations were recorded that day — enter a conversation ID below to replay it across models."}
             </span>
           </span>
           <button
@@ -166,7 +234,11 @@ export default function Comparisons() {
       )}
 
       <Section title="Run a comparison">
-        <NewComparisonForm onCreated={refresh} />
+        <NewComparisonForm
+          onCreated={refresh}
+          dayConversations={dayConversations}
+          prefillConversationId={prefillConversationId}
+        />
       </Section>
 
       <div className="flex items-center justify-end">

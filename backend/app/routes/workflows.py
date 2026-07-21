@@ -10,6 +10,8 @@ Response conventions (shared with the rest of the API):
 * Single resource -> the serialized object directly
 * Errors -> ``{"error": message, "details": {...optional}}`` (see ``errors``)
 """
+from datetime import datetime, timedelta
+
 from flask import Blueprint, jsonify, request
 
 from ..errors import error_response
@@ -43,6 +45,19 @@ def _clean(value):
     if value is None:
         return None
     return value.strip() or None
+
+
+def _parse_when(value):
+    """Parse an ISO date or datetime string into a ``datetime`` (or None).
+
+    Accepts a trailing 'Z' (UTC) and bare dates ("2026-07-20") alike.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 # -- Workflows --------------------------------------------------------------
@@ -110,8 +125,18 @@ def list_conversations():
             },
         )
 
+    # Optional created_at bounds. ``on=YYYY-MM-DD`` is a convenience for a single
+    # calendar day (used by the "investigate a change" deep-link).
+    since = _parse_when(request.args.get("since"))
+    until = _parse_when(request.args.get("until"))
+    on = _parse_when(request.args.get("on"))
+    if on is not None:
+        day = on.replace(hour=0, minute=0, second=0, microsecond=0)
+        since = day
+        until = day + timedelta(days=1)
+
     items, total = workflow_service.list_conversations(
-        page=page, limit=limit, q=q, status=status, sort=sort
+        page=page, limit=limit, q=q, status=status, sort=sort, since=since, until=until
     )
     return jsonify(
         paginated([serialize_conversation_summary(c) for c in items], page, limit, total)
