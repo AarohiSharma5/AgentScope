@@ -359,6 +359,123 @@ function AlertsPanel({ alerts, onSelectDate }) {
   );
 }
 
+// Deploy / change annotations: create, list and delete markers that appear on
+// the score trend so metric movements can be tied to what changed.
+function AnnotationsCard({ annotations, onAdd, onDelete }) {
+  const [label, setLabel] = useState("");
+  const [date, setDate] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const fmtDate = (iso) =>
+    iso
+      ? new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "";
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!label.trim() || !date) {
+      setError("Label and date are required.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onAdd({
+        label: label.trim(),
+        annotated_at: date,
+        description: description.trim() || undefined,
+      });
+      setLabel("");
+      setDate("");
+      setDescription("");
+    } catch (err) {
+      setError(err.message || "Failed to add annotation.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls =
+    "rounded-lg border border-ink-500 bg-ink-800 px-3 py-1.5 text-sm text-gray-200 outline-none focus:border-accent";
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-gray-200">Deploys &amp; Annotations</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Mark a change (new prompt, model switch) to tie it to metric movements. Markers
+          show on the score trend.
+        </p>
+      </div>
+      <form onSubmit={submit} className="mb-4 flex flex-wrap items-end gap-2">
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Label</label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="v2 prompt shipped"
+            className={`w-44 ${inputCls}`}
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+        </div>
+        <div className="flex flex-1 flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">
+            Note (optional)
+          </label>
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What changed?"
+            className={`w-full ${inputCls}`}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={busy}
+          className="rounded-lg bg-accent/90 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+        >
+          {busy ? "Adding…" : "Add"}
+        </button>
+      </form>
+      {error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
+      {annotations.length === 0 ? (
+        <p className="text-sm text-gray-500">No annotations yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {annotations.map((a) => (
+            <li
+              key={a.id}
+              className="flex items-start justify-between gap-3 rounded-lg border border-ink-600/50 px-3 py-2"
+            >
+              <div>
+                <span className="text-sm text-amber-300">⚑ {a.label}</span>
+                <span className="ml-2 text-xs text-gray-500">{fmtDate(a.date)}</span>
+                {a.description && <p className="mt-0.5 text-xs text-gray-500">{a.description}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => onDelete(a.id)}
+                className="shrink-0 text-xs text-gray-500 transition-colors hover:text-rose-400"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // Breakdown of a single day, shown when a chart point is clicked.
 function DayDetail({ day, onClear }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
@@ -412,6 +529,8 @@ export default function Analytics() {
   const [error, setError] = useState(null);
   const [days, setDays] = useState(90);
   const [selectedDate, setSelectedDate] = useState(null);
+  const [annotations, setAnnotations] = useState([]);
+  const [annoVersion, setAnnoVersion] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -430,6 +549,26 @@ export default function Analytics() {
       active = false;
     };
   }, [days]);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getAnnotations({ days })
+      .then((r) => active && setAnnotations(r?.data || []))
+      .catch(() => active && setAnnotations([]));
+    return () => {
+      active = false;
+    };
+  }, [days, annoVersion]);
+
+  const addAnnotation = async (payload) => {
+    await api.createAnnotation(payload);
+    setAnnoVersion((v) => v + 1);
+  };
+  const removeAnnotation = async (id) => {
+    await api.deleteAnnotation(id);
+    setAnnoVersion((v) => v + 1);
+  };
 
   if (loading) return <Loading label="Loading analytics…" />;
   if (error) {
@@ -465,6 +604,8 @@ export default function Analytics() {
   const failureTrend = trendPct(daily, (d) => d.failure_rate);
   const successTrend = trendPct(daily, (d) => (d.evaluations == null ? null : 1 - d.failure_rate));
   const alerts = buildAlerts(daily);
+  // Annotation markers keyed by day, drawn on the score trend chart.
+  const annotationMarkers = annotations.map((a) => ({ key: a.date, label: a.label }));
 
   // Evaluations actually recorded inside the selected window (the daily series
   // is window-bounded, unlike the all-time `totals.total_evaluations`).
@@ -629,6 +770,7 @@ export default function Analytics() {
               label="Average evaluation score over time"
               onSelect={toggleDay}
               selectedKey={selectedDate}
+              markers={annotationMarkers}
             />
           </ChartCard>
           <ChartCard title="Token Usage">
@@ -667,6 +809,12 @@ export default function Analytics() {
           </ChartCard>
         </div>
       )}
+
+      <AnnotationsCard
+        annotations={annotations}
+        onAdd={addAnnotation}
+        onDelete={removeAnnotation}
+      />
     </div>
   );
 }

@@ -237,6 +237,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         workflow_trace,
         evaluation_trace,
         auth,
+        annotation,
     )
 
     # Blueprints
@@ -246,6 +247,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.rag import rag_bp
     from .routes.workflows import workflows_bp
     from .routes.evaluations import evaluations_bp
+    from .routes.annotations import annotations_bp
     from .routes.stream import stream_bp
     from .routes.plugins import plugins_bp
     from .routes.providers import providers_bp
@@ -270,6 +272,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         rag_bp,
         workflows_bp,
         evaluations_bp,
+        annotations_bp,
         stream_bp,
         plugins_bp,
         providers_bp,

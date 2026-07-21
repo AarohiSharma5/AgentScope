@@ -157,6 +157,11 @@ async function core(
         throw new ApiError(await parseError(res), res.status);
       }
 
+      // 204 No Content (e.g. DELETE) has no body to parse.
+      if (res.status === 204) {
+        if (timer) clearTimeout(timer);
+        return null;
+      }
       const data = await res.json();
       if (timer) clearTimeout(timer);
       return data;
@@ -193,6 +198,10 @@ export function request(path, opts) {
 
 export function post(path, body = {}, opts) {
   return core("POST", path, { ...opts, body });
+}
+
+export function del(path, opts) {
+  return core("DELETE", path, opts);
 }
 
 function buildQuery(params = {}) {
@@ -251,6 +260,11 @@ export const api = {
   getEvaluationMetrics: (opts) => request("/dashboard/evaluation-metrics", opts),
   getEvaluationAnalytics: (params, opts) =>
     request(`/dashboard/evaluation-analytics${buildQuery(params)}`, opts),
+
+  // Timeline annotations (deploy / change markers)
+  getAnnotations: (params, opts) => request(`/annotations${buildQuery(params)}`, opts),
+  createAnnotation: (body, opts) => post("/annotations", body, opts),
+  deleteAnnotation: (id, opts) => del(`/annotations/${id}`, opts),
 
   // v0.5 — prompt versions, prompt diff and trace diff
   getPromptVersions: (params, opts) => request(`/prompt-versions${buildQuery(params)}`, opts),

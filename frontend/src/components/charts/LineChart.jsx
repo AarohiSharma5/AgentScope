@@ -10,6 +10,7 @@ export default function LineChart({
   label = "Line chart",
   onSelect,
   selectedKey,
+  markers = [],
 }) {
   const interactive = typeof onSelect === "function";
   const points = data.filter((d) => d.value != null);
@@ -37,39 +38,67 @@ export default function LineChart({
     value: format(d.value),
   }));
 
+  // Resolve each marker's x-position (as a %) from the data point sharing its
+  // key; markers whose date isn't in the series are dropped.
+  const xByKey = {};
+  coords.forEach((c) => {
+    if (c.d.key != null) xByKey[c.d.key] = c.x;
+  });
+  const activeMarkers = (markers || [])
+    .map((m) => ({ ...m, x: xByKey[m.key] }))
+    .filter((m) => m.x != null);
+
   return (
-    <figure className="m-0" role="group" aria-label={label} style={{ height }}>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        className="h-full w-full"
-        aria-hidden="true"
-      >
-        <polyline
-          points={path}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className="text-accent"
-          vectorEffect="non-scaling-stroke"
-        />
-        {coords.map((c, i) => {
-          const selected = interactive && c.d.key != null && c.d.key === selectedKey;
-          return (
-            <circle
-              key={i}
-              cx={c.x}
-              cy={c.y}
-              r={selected ? "3" : "1.6"}
-              className={`fill-accent ${interactive ? "cursor-pointer" : ""}`}
-              vectorEffect="non-scaling-stroke"
-              onClick={interactive ? () => onSelect(c.d) : undefined}
+    <figure className="m-0" role="group" aria-label={label}>
+      <div className="relative" style={{ height }}>
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          preserveAspectRatio="none"
+          className="h-full w-full"
+          aria-hidden="true"
+        >
+          <polyline
+            points={path}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className="text-accent"
+            vectorEffect="non-scaling-stroke"
+          />
+          {coords.map((c, i) => {
+            const selected = interactive && c.d.key != null && c.d.key === selectedKey;
+            return (
+              <circle
+                key={i}
+                cx={c.x}
+                cy={c.y}
+                r={selected ? "3" : "1.6"}
+                className={`fill-accent ${interactive ? "cursor-pointer" : ""}`}
+                vectorEffect="non-scaling-stroke"
+                onClick={interactive ? () => onSelect(c.d) : undefined}
+              >
+                <title>{`${c.d.label}: ${format(c.d.value)}`}</title>
+              </circle>
+            );
+          })}
+        </svg>
+        {/* Deploy/change annotation markers overlaid as vertical guide lines. */}
+        {activeMarkers.map((m, i) => (
+          <div
+            key={`${m.key}-${i}`}
+            className="pointer-events-none absolute top-0 bottom-0 border-l border-dashed border-amber-400/70"
+            style={{ left: `${m.x}%` }}
+            aria-hidden="true"
+          >
+            <span
+              className="absolute -top-0.5 left-1 whitespace-nowrap rounded bg-amber-400/15 px-1 text-[9px] text-amber-300"
+              title={m.label}
             >
-              <title>{`${c.d.label}: ${format(c.d.value)}`}</title>
-            </circle>
-          );
-        })}
-      </svg>
+              ⚑ {m.label}
+            </span>
+          </div>
+        ))}
+      </div>
       <div
         className="mt-1 flex justify-between text-[10px] text-gray-400"
         aria-hidden="true"
