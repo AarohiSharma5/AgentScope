@@ -244,6 +244,8 @@ export const api = {
   getWorkflows: (params, opts) => request(`/workflows${buildQuery(params)}`, opts),
   getWorkflow: (id, opts) => request(`/workflows/${id}`, opts),
   getConversations: (params, opts) => request(`/conversations${buildQuery(params)}`, opts),
+  getInvestigationConversations: (params, opts) =>
+    request(`/conversations/investigate${buildQuery(params)}`, opts),
   getConversation: (id, opts) => request(`/conversations/${id}`, opts),
   getMessages: (params, opts) => request(`/messages${buildQuery(params)}`, opts),
   getWorkflowMetrics: (opts) => request("/dashboard/workflow-metrics", opts),

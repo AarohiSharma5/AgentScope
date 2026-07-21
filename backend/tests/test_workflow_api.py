@@ -140,6 +140,56 @@ def test_list_conversations_day_filter(client, seeded):
     ]["total"] == 1
 
 
+def test_investigate_ranks_worst_quality_first(client, app):
+    """The Investigate endpoint surfaces a day's worst conversation first."""
+    from app.models.agent_trace import AgentStatus
+    from app.services import evaluation_service as es
+    from app.utils.timeutils import utcnow
+
+    with app.app_context():
+        good = AgentOrchestrator(conversation_name="good")
+        good.create_agent("A", role="solo").execute()
+        good.finish()
+        good_id = good.conversation.id
+        es.finish_evaluation_run(
+            es.create_evaluation_run(good_id, evaluation_type="quality"),
+            overall_score=0.95,
+            status=AgentStatus.SUCCESS,
+        )
+
+        bad = AgentOrchestrator(conversation_name="bad")
+        bad.create_agent("B", role="solo").execute()
+        bad.finish()
+        bad_id = bad.conversation.id
+        es.finish_evaluation_run(
+            es.create_evaluation_run(bad_id, evaluation_type="quality"),
+            overall_score=0.30,
+            status=AgentStatus.SUCCESS,
+        )
+
+    today = utcnow().date().isoformat()
+    body = client.get(
+        f"/api/conversations/investigate?on={today}&metric=quality"
+    ).get_json()
+    ids = [c["id"] for c in body["data"]]
+    assert ids[0] == bad_id  # lowest score ranked first
+    assert ids.index(bad_id) < ids.index(good_id)
+    assert body["data"][0]["overall_score"] == 0.30
+    assert body["metric"] == "quality"
+
+
+def test_investigate_validates_inputs(client, seeded):
+    """Missing date and unknown metric are rejected with 400s."""
+    assert client.get("/api/conversations/investigate").status_code == 400
+    from app.utils.timeutils import utcnow
+
+    today = utcnow().date().isoformat()
+    assert (
+        client.get(f"/api/conversations/investigate?on={today}&metric=bogus").status_code
+        == 400
+    )
+
+
 def test_list_conversation_counts_are_per_row(client, seeded, app):
     """Counts come from grouped subqueries and map to the right row (H7).
 

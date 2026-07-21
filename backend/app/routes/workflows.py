@@ -21,6 +21,7 @@ from ..serializers.message import serialize_message
 from ..serializers.workflow import (
     serialize_conversation_detail,
     serialize_conversation_summary,
+    serialize_investigation_candidate,
     serialize_workflow_detail,
     serialize_workflow_summary,
 )
@@ -140,6 +141,46 @@ def list_conversations():
     )
     return jsonify(
         paginated([serialize_conversation_summary(c) for c in items], page, limit, total)
+    )
+
+
+@workflows_bp.get("/conversations/investigate")
+def list_investigation_candidates():
+    """Rank a day's conversations worst-first for the "investigate a change" flow.
+
+    ``?on=YYYY-MM-DD`` (required) selects the day; ``?metric=`` picks the ranking
+    (quality|cost|latency|failure, default quality). Returns a bounded list with
+    the most-likely-culprit conversation first, so isolating a regression is one
+    click instead of hunting through hundreds of runs.
+    """
+    on = _parse_when(request.args.get("on"))
+    if on is None:
+        return error_response(
+            "a valid ?on=YYYY-MM-DD date is required", 400
+        )
+
+    metric = _clean(request.args.get("metric")) or "quality"
+    if metric not in workflow_service.INVESTIGATION_METRICS:
+        return error_response(
+            "invalid metric",
+            400,
+            {"allowed": sorted(workflow_service.INVESTIGATION_METRICS)},
+        )
+
+    try:
+        limit = int(request.args.get("limit", 25))
+    except (TypeError, ValueError):
+        return error_response("limit must be an integer", 400)
+    limit = max(1, min(limit, 50))
+
+    items = workflow_service.list_investigation_candidates(
+        day=on, metric=metric, limit=limit
+    )
+    return jsonify(
+        {
+            "data": [serialize_investigation_candidate(c) for c in items],
+            "metric": metric,
+        }
     )
 
 

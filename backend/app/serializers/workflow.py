@@ -202,6 +202,18 @@ def serialize_conversation_summary(conversation: ConversationRun) -> dict:
     }
 
 
+def serialize_investigation_candidate(conversation: ConversationRun) -> dict:
+    """Conversation summary plus the metrics used to rank it worst-first.
+
+    ``overall_score`` / ``total_cost`` are stamped by
+    :func:`workflow_service.list_investigation_candidates`.
+    """
+    data = serialize_conversation_summary(conversation)
+    data["overall_score"] = getattr(conversation, "overall_score", None)
+    data["total_cost"] = getattr(conversation, "total_cost", None)
+    return data
+
+
 def serialize_conversation_detail(conversation: ConversationRun) -> dict:
     """Full conversation: general info, agent tree, messages, timeline and steps."""
     nodes = list(conversation.nodes)

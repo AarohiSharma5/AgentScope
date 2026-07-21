@@ -689,9 +689,6 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
                 {a.description && <p className="mt-0.5 text-xs text-gray-500">{a.description}</p>}
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                {/* TODO(backlog): deep-link to the conversations from this
-                    annotation's day so Investigate can pre-select one to compare
-                    (annotation date -> conversation list -> one-click isolate). */}
                 <Link
                   to={`/comparisons?label=${encodeURIComponent(a.label)}&since=${a.date}`}
                   className="text-xs text-accent transition-colors hover:underline"
@@ -725,6 +722,17 @@ const FINDING_DOT = {
 // of detected findings (regressions, anomalies, cost drivers, budget breaches).
 // The summary is heuristic by default; "Summarize with AI" swaps in an
 // LLM-written narrative when a provider is configured.
+// Which metric a finding is about, so Investigate can pre-select the day's
+// *worst* conversation for that metric (not just the most recent one).
+function metricForFinding(id) {
+  if (!id) return null;
+  if (id.startsWith("quality") || id.startsWith("score")) return "quality";
+  if (id.startsWith("cost")) return "cost";
+  if (id.startsWith("latency")) return "latency";
+  if (id.startsWith("failure")) return "failure";
+  return null;
+}
+
 function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy }) {
   if (!insights) return null;
   const { summary, summary_source: source, findings = [] } = insights;
@@ -789,7 +797,9 @@ function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy
                     {f.suspects.map((s, i) => (
                       <span key={`${s.date}-${s.label}-${i}`}>
                         <Link
-                          to={`/comparisons?label=${encodeURIComponent(s.label)}&since=${s.date}`}
+                          to={`/comparisons?label=${encodeURIComponent(s.label)}&since=${s.date}${
+                            metricForFinding(f.id) ? `&metric=${metricForFinding(f.id)}` : ""
+                          }`}
                           className="text-accent hover:underline"
                           title="Isolate this change by re-running conversations across models"
                         >

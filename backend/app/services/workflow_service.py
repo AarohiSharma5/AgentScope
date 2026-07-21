@@ -5,10 +5,10 @@ so the Multi-Agent SDK (:mod:`app.orchestration`) can stay a thin, lightweight
 layer that only orchestrates and never touches the session directly.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import String, cast, func, or_
+from sqlalchemy import String, and_, cast, func, or_
 from sqlalchemy.orm import selectinload
 
 from ..extensions import db
@@ -462,6 +462,133 @@ def _attach_conversation_counts(conversations: list[ConversationRun]) -> None:
     for conversation in conversations:
         conversation.agent_count = node_counts.get(conversation.id, 0)
         conversation.message_count = message_counts.get(conversation.id, 0)
+
+
+INVESTIGATION_METRICS = {"quality", "cost", "latency", "failure"}
+# Bound how many of a day's conversations we rank in-process. High enough to
+# cover normal daily volume, low enough to stay cheap.
+_INVESTIGATION_SCAN_CAP = 500
+
+
+def _latest_eval_scores(conversation_ids: list[int]) -> dict[int, float]:
+    """Map each conversation id -> its most recent evaluation ``overall_score``.
+
+    One grouped query finds each conversation's latest evaluation timestamp; a
+    second fetches that run's score. Avoids an N+1 over ``evaluation_runs``.
+    """
+    if not conversation_ids:
+        return {}
+    from ..models.evaluation_trace import EvaluationRun
+
+    latest = (
+        db.session.query(
+            EvaluationRun.conversation_run_id.label("cid"),
+            func.max(EvaluationRun.created_at).label("mx"),
+        )
+        .filter(EvaluationRun.conversation_run_id.in_(conversation_ids))
+        .group_by(EvaluationRun.conversation_run_id)
+        .subquery()
+    )
+    rows = (
+        db.session.query(EvaluationRun.conversation_run_id, EvaluationRun.overall_score)
+        .join(
+            latest,
+            and_(
+                EvaluationRun.conversation_run_id == latest.c.cid,
+                EvaluationRun.created_at == latest.c.mx,
+            ),
+        )
+        .all()
+    )
+    return {cid: score for cid, score in rows if score is not None}
+
+
+def _total_costs(conversation_ids: list[int]) -> dict[int, float]:
+    """Map each conversation id -> summed step cost (one grouped query)."""
+    if not conversation_ids:
+        return {}
+    rows = (
+        db.session.query(
+            AgentNode.conversation_run_id,
+            func.coalesce(func.sum(AgentStep.cost), 0.0),
+        )
+        .select_from(AgentNode)
+        .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id)
+        .filter(AgentNode.conversation_run_id.in_(conversation_ids))
+        .group_by(AgentNode.conversation_run_id)
+        .all()
+    )
+    return {cid: float(cost) for cid, cost in rows}
+
+
+def list_investigation_candidates(
+    day: datetime, metric: str = "quality", limit: int = 25
+) -> list[ConversationRun]:
+    """Return a day's conversations ranked *worst-first* for the given metric.
+
+    Used by the analytics "Investigate a change" flow: instead of making the
+    user pick a conversation to replay out of (potentially) hundreds, we surface
+    the ones most likely to show the regression. Failed conversations always
+    sort first; then, by ``metric``:
+
+    * ``quality``  -> lowest evaluation score (unscored last)
+    * ``latency``  -> highest latency
+    * ``cost``     -> highest total cost
+    * ``failure``  -> failures first, then most recent
+
+    Each returned conversation is stamped with ``overall_score`` and
+    ``total_cost`` (plus the usual agent/message counts) for display.
+    """
+    if metric not in INVESTIGATION_METRICS:
+        metric = "quality"
+    start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+
+    query = ConversationRun.query.filter(
+        ConversationRun.created_at >= start,
+        ConversationRun.created_at < end,
+    )
+    org_id = _tenant_scope()
+    if org_id is not None:
+        query = query.filter(ConversationRun.organization_id == org_id)
+    conversations = (
+        query.order_by(ConversationRun.created_at.desc())
+        .limit(_INVESTIGATION_SCAN_CAP)
+        .all()
+    )
+    if not conversations:
+        return []
+
+    ids = [c.id for c in conversations]
+    scores = _latest_eval_scores(ids)
+    costs = _total_costs(ids)
+    for c in conversations:
+        c.overall_score = scores.get(c.id)
+        c.total_cost = costs.get(c.id, 0.0)
+
+    def failed_first(c: ConversationRun) -> int:
+        return 0 if c.status == AgentStatus.FAILED else 1
+
+    if metric == "latency":
+        conversations.sort(key=lambda c: (failed_first(c), -(c.latency_ms or 0.0)))
+    elif metric == "cost":
+        conversations.sort(key=lambda c: (failed_first(c), -(c.total_cost or 0.0)))
+    elif metric == "failure":
+        conversations.sort(
+            key=lambda c: (failed_first(c), -(c.created_at.timestamp()))
+        )
+    else:  # quality: lowest score first, unscored conversations last
+        conversations.sort(
+            key=lambda c: (
+                failed_first(c),
+                c.overall_score is None,
+                c.overall_score if c.overall_score is not None else 0.0,
+            )
+        )
+
+    top = conversations[:limit]
+    _attach_conversation_counts(top)
+    return top
 
 
 def get_conversation(conversation_id: int) -> Optional[ConversationRun]:

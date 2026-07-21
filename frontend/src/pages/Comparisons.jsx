@@ -68,24 +68,33 @@ function NewComparisonForm({ onCreated, dayConversations, prefillConversationId 
         {hasDayList ? (
           <label className="flex flex-col gap-1">
             <span className="text-xs uppercase tracking-wider text-gray-500">
-              Conversation from that day
+              Conversation to replay (worst first)
             </span>
             <select
               value={conversationId}
               onChange={(e) => setConversationId(e.target.value)}
               className={`${input} w-full md:w-72`}
             >
-              {dayList.map((c) => (
-                <option key={c.id} value={c.id}>
-                  #{c.id} · {c.conversation_name || "conversation"} ·{" "}
-                  {c.created_at
-                    ? new Date(c.created_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                    : ""}
-                </option>
-              ))}
+              {dayList.map((c) => {
+                const time = c.created_at
+                  ? new Date(c.created_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : "";
+                const tags = [];
+                if (c.status === "failed") tags.push("failed");
+                if (c.overall_score != null)
+                  tags.push(`score ${Math.round(c.overall_score * 100)}%`);
+                if (c.total_cost) tags.push(`$${Number(c.total_cost).toFixed(4)}`);
+                return (
+                  <option key={c.id} value={c.id}>
+                    #{c.id} · {c.conversation_name || "conversation"}
+                    {time ? ` · ${time}` : ""}
+                    {tags.length ? ` · ${tags.join(" · ")}` : ""}
+                  </option>
+                );
+              })}
             </select>
           </label>
         ) : (
@@ -136,6 +145,7 @@ export default function Comparisons() {
   // Context passed from an analytics annotation's "Investigate" link.
   const investigateLabel = searchParams.get("label");
   const investigateSince = searchParams.get("since");
+  const investigateMetric = searchParams.get("metric");
 
   // Conversations recorded on the changed day, for one-click isolation.
   const [dayConversations, setDayConversations] = useState(null);
@@ -148,8 +158,14 @@ export default function Comparisons() {
     }
     let cancelled = false;
     setDayLoading(true);
+    // Rank that day's conversations worst-first for the regressed metric, so the
+    // one most likely showing the change is pre-selected (no manual hunting).
     api
-      .getConversations({ on: investigateSince, sort: "-created_at", limit: 50 })
+      .getInvestigationConversations({
+        on: investigateSince,
+        metric: investigateMetric || undefined,
+        limit: 25,
+      })
       .then((res) => {
         if (!cancelled) setDayConversations(res?.data ?? []);
       })
@@ -162,7 +178,7 @@ export default function Comparisons() {
     return () => {
       cancelled = true;
     };
-  }, [investigateSince]);
+  }, [investigateSince, investigateMetric]);
 
   const prefillConversationId = dayConversations?.[0]?.id ?? null;
 
@@ -217,9 +233,13 @@ export default function Comparisons() {
             )}
             <span className="mt-0.5 block text-xs opacity-70">
               {dayLoading
-                ? "Finding that day's conversations…"
+                ? "Finding that day's most-affected conversations…"
                 : dayConversations && dayConversations.length > 0
-                ? `Pre-selected a conversation from ${fmtDate(investigateSince)} below — hit “Compare models” to see which variable moved the metric.`
+                ? `Pre-selected the worst${
+                    investigateMetric ? ` ${investigateMetric}` : ""
+                  } conversation from ${fmtDate(
+                    investigateSince
+                  )} below — hit “Compare models” to see which variable moved the metric.`
                 : "No conversations were recorded that day — enter a conversation ID below to replay it across models."}
             </span>
           </span>
