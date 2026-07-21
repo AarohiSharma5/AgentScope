@@ -86,9 +86,13 @@ Set **`STREAM_BROKER_URL`** to a Redis URL to fan events out across every worker
 and replica via Redis pub/sub. Each worker publishes its events to a shared
 channel and a background listener delivers peer workers' events into its own
 local subscribers; event ids come from a Redis `INCR` counter so `Last-Event-ID`
-reconnection stays coherent cluster-wide. It degrades gracefully — if Redis is
-briefly unreachable, id allocation falls back to a local counter and publish
-failures are logged, never breaking the request that produced the event.
+reconnection stays coherent cluster-wide. Recent events are also kept in a
+shared, capped Redis history, so a client that reconnects to a **different** (or
+freshly-started/restarted) worker still replays everything it missed after its
+`Last-Event-ID` — not just the events that one worker happened to observe. It
+degrades gracefully — if Redis is briefly unreachable, id allocation falls back
+to a local counter, history/publish failures are logged and replay falls back to
+the worker's in-memory buffer, never breaking the request that produced the event.
 
 ```bash
 STREAM_BROKER_URL=redis://redis:6379/0     # or reuse RATE_LIMIT_STORAGE_URL / REDIS_URL

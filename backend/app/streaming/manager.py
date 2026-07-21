@@ -19,7 +19,10 @@ Design notes
   idle for ``heartbeat_interval`` seconds, keeping proxies/clients alive and
   surfacing dead connections promptly.
 * **Reconnection.** A bounded ring buffer of recent events lets a reconnecting
-  SSE client replay everything after its ``Last-Event-ID``.
+  SSE client replay everything after its ``Last-Event-ID``. With a cross-worker
+  broker (Redis) the replay comes from a *shared* history, so a client that
+  reconnects to a different — or freshly-started — worker still replays events
+  it missed, not just the ones that worker happened to see.
 * **Per-process.** State is in-memory, so under multiple gunicorn workers each
   worker broadcasts to its own subscribers. A cross-process fan-out (e.g. Redis
   pub/sub) can be layered on later without changing this interface.
@@ -233,15 +236,47 @@ class LiveTraceManager:
             max_dropped=self.max_dropped,
             org_scope=org_scope,
         )
+        # Fetch the broker's shared history (if any) *before* taking the lock —
+        # it may do network I/O (Redis). ``None`` means "no shared history", so
+        # we fall back to this worker's local ring buffer.
+        shared = None
+        if last_event_id is not None:
+            history_fn = getattr(self._broker, "history_since", None)
+            if history_fn is not None:
+                shared = history_fn(last_event_id)
         with self._lock:
-            self._subscribers[subscriber.id] = subscriber
             if last_event_id is not None:
-                for event in self._history:
-                    if event.id > last_event_id and subscriber.wants(event):
-                        subscriber.put(event)
+                self._replay(subscriber, last_event_id, shared)
+            # Register *after* replay so a concurrent publish (which also holds
+            # the lock) can't interleave a live event ahead of the replayed ones.
+            self._subscribers[subscriber.id] = subscriber
             total = len(self._subscribers)
         logger.info("stream subscriber %s connected (%s active)", subscriber.id, total)
         return subscriber
+
+    def _replay(self, subscriber: Subscriber, last_event_id: int, shared) -> None:
+        """Replay missed events after ``last_event_id`` into a new subscriber.
+
+        With a shared (cross-worker) history we deliver it, then top up from the
+        local ring buffer for anything newer that reached this worker after the
+        shared snapshot was taken — closing the snapshot→register race without
+        duplicating (local events are only used past the shared high-water id).
+        Without shared history we replay purely from the local buffer.
+        """
+        floor = last_event_id
+        if shared is not None:
+            for wire in shared:
+                try:
+                    event = Event.from_wire(wire)
+                except Exception:  # noqa: BLE001 - skip a malformed history entry
+                    continue
+                if subscriber.wants(event):
+                    subscriber.put(event)
+                if event.id > floor:
+                    floor = event.id
+        for event in self._history:
+            if event.id > floor and subscriber.wants(event):
+                subscriber.put(event)
 
     def unsubscribe(self, subscriber: Subscriber) -> None:
         """Deregister and close a subscriber (idempotent, graceful)."""

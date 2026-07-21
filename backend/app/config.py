@@ -250,10 +250,13 @@ class Config:
     # Rate limiting. In-process (per worker) by default; set
     # ``RATE_LIMIT_STORAGE_URL`` to a Redis URL to share windows across workers
     # so the configured limits hold cluster-wide instead of being multiplied by
-    # the worker count.
+    # the worker count. Falls back to ``REDIS_URL`` so a single Redis instance
+    # can power shared streaming *and* rate limiting from one env var.
     RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
     RATE_LIMIT_DEFAULT = os.getenv("RATE_LIMIT_DEFAULT", "120/minute")
-    RATE_LIMIT_STORAGE_URL = os.getenv("RATE_LIMIT_STORAGE_URL") or None
+    RATE_LIMIT_STORAGE_URL = (
+        os.getenv("RATE_LIMIT_STORAGE_URL") or os.getenv("REDIS_URL") or None
+    )
 
     # Per-surface limits so ingest/chat/import are protected too (not just auth).
     # Ingest is high-throughput, so its default is generous; tighten per your

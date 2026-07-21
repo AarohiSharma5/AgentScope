@@ -895,22 +895,17 @@ def _agent_metrics_for_org(organization_id: Optional[int] = None) -> dict:
 # the v0.3 models. The TraceRecorder SDK only orchestrates and calls into here.
 # ---------------------------------------------------------------------------
 
-# Embedding price table (USD per 1K input tokens). Extend per provider.
-_EMBEDDING_PRICE_PER_1K = {
-    "text-embedding-3-small": 0.00002,
-    "text-embedding-3-large": 0.00013,
-    "text-embedding-ada-002": 0.0001,
-}
-
-
 def estimate_embedding_cost(model: Optional[str], input_tokens: Optional[int]) -> Optional[float]:
-    """Estimate embedding cost in USD, or None if the model/tokens are unknown."""
+    """Estimate embedding cost in USD, or None if the model/tokens are unknown.
+
+    Routes through the central :mod:`app.pricing` table (embeddings are priced
+    input-only), so operator overrides (``AGENTSCOPE_MODEL_PRICES``) and prefix
+    matching apply to embeddings exactly as they do to chat/completion models —
+    one source of truth for cost.
+    """
     if not model or input_tokens is None:
         return None
-    price = _EMBEDDING_PRICE_PER_1K.get(model)
-    if price is None:
-        return None
-    return round(input_tokens / 1000 * price, 8)
+    return pricing.estimate_cost(model, input_tokens, 0)
 
 
 def create_embedding_trace(

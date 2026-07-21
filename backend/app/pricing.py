@@ -42,6 +42,11 @@ DEFAULT_MODEL_PRICES: Dict[str, Tuple[float, float]] = {
     "claude-3-haiku": (0.00025, 0.00125),
     "gemini-1.5-pro": (0.00125, 0.005),
     "gemini-1.5-flash": (0.000075, 0.0003),
+    # Embedding models are input-only (output price 0).
+    "text-embedding-3-small": (0.00002, 0.0),
+    "text-embedding-3-large": (0.00013, 0.0),
+    "text-embedding-ada-002": (0.0001, 0.0),
+    "text-embedding-004": (0.0, 0.0),
 }
 
 # Runtime overrides set programmatically (highest priority). Persist for the

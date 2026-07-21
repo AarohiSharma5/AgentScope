@@ -346,6 +346,8 @@ class _Bus:
     def __init__(self):
         self._brokers = []
         self._seq = itertools.count(1)
+        # Shared, cross-worker history (like the Redis sorted set): id -> wire.
+        self.history = {}
 
     def next_id(self):
         return next(self._seq)
@@ -354,6 +356,9 @@ class _Bus:
         self._brokers.append(broker)
 
     def deliver(self, wire):
+        eid = wire.get("id")
+        if eid:
+            self.history[eid] = wire
         for broker in list(self._brokers):
             if broker._on_remote is not None:
                 broker._on_remote(wire)
@@ -372,6 +377,13 @@ class _BusBroker:
 
     def publish(self, wire):
         self._bus.deliver(wire)
+
+    def history_since(self, last_event_id, limit=None):
+        return [
+            wire
+            for eid, wire in sorted(self._bus.history.items())
+            if eid > last_event_id
+        ]
 
     def start(self, on_remote):
         self._on_remote = on_remote
@@ -448,6 +460,51 @@ def test_broker_ids_are_globally_monotonic():
     e2 = worker_b.publish(EventType.TRACE_STARTED, {})
     e3 = worker_a.publish(EventType.TRACE_STARTED, {})
     assert e1.id < e2.id < e3.id
+
+
+def test_reconnect_to_fresh_worker_replays_from_shared_history():
+    """A3: a client reconnecting to a *different*/late-started worker replays
+    events it missed, from the broker's shared history — not just the events
+    that particular worker happened to observe."""
+    bus = _Bus()
+    worker_a = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+
+    e1 = worker_a.publish(EventType.TRACE_STARTED, {"n": 1})
+    e2 = worker_a.publish(EventType.TRACE_UPDATED, {"n": 2})
+
+    # A brand-new worker joins the cluster *after* those events were published,
+    # so it never saw them live and its local ring buffer is empty.
+    worker_b = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+    assert worker_b.stats()["history_size"] == 0
+
+    sub = worker_b.subscribe(last_event_id=e1.id)
+    stream = sub.stream()
+    replayed = next(stream)
+    assert replayed.id == e2.id and replayed.data == {"n": 2}
+
+
+def test_shared_history_replay_respects_tenant_scope():
+    bus = _Bus()
+    worker = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+    worker.publish(EventType.TRACE_STARTED, {"n": 1}, organization_id=1)
+    e_other = worker.publish(EventType.TRACE_STARTED, {"n": 2}, organization_id=2)
+    e_mine = worker.publish(EventType.TRACE_STARTED, {"n": 3}, organization_id=1)
+
+    peer = LiveTraceManager(heartbeat_interval=5, broker=_BusBroker(bus))
+    sub = peer.subscribe(last_event_id=0, org_scope=1)
+
+    # Only org 1's events replay (in id order); org 2's is filtered out.
+    stream = sub.stream()
+    first, second = next(stream), next(stream)
+    assert [first.data, second.data] == [{"n": 1}, {"n": 3}]
+    assert "organization_id" not in first.to_dict()  # tenant id never leaks to the client
+    assert e_other.id and e_mine.id  # both published, but org 2's isn't delivered here
+
+
+def test_in_process_broker_has_no_shared_history():
+    from app.streaming.broker import InProcessBroker
+
+    assert InProcessBroker().history_since(0) is None
 
 
 def test_build_broker_defaults_to_in_process():

@@ -52,6 +52,10 @@ class InProcessBroker:
     def publish(self, wire: dict) -> None:  # noqa: ARG002 - nothing to fan out
         return None
 
+    def history_since(self, last_event_id: int, limit: Optional[int] = None):  # noqa: ARG002
+        """No shared history — the manager replays from its local ring buffer."""
+        return None
+
     def start(self, on_remote: RemoteHandler) -> None:  # noqa: ARG002
         return None
 
@@ -64,14 +68,25 @@ class RedisBroker:
 
     DEFAULT_CHANNEL = "agentscope:stream:events"
     SEQ_KEY = "agentscope:stream:seq"
+    HISTORY_KEY = "agentscope:stream:history"
+    DEFAULT_HISTORY_MAXLEN = 1000
+    DEFAULT_HISTORY_TTL = 86400  # seconds; keeps the buffer from living forever
 
-    def __init__(self, url: str, channel: str = DEFAULT_CHANNEL) -> None:
+    def __init__(
+        self,
+        url: str,
+        channel: str = DEFAULT_CHANNEL,
+        history_maxlen: int = DEFAULT_HISTORY_MAXLEN,
+        history_ttl: int = DEFAULT_HISTORY_TTL,
+    ) -> None:
         import redis  # lazy import: only required when a broker URL is configured
 
         # ``from_url`` is lazy — no socket is opened until the first command, so
         # constructing the broker never blocks app startup on Redis being up.
         self._redis = redis.Redis.from_url(url, socket_timeout=5)
         self._channel = channel
+        self._history_maxlen = history_maxlen
+        self._history_ttl = history_ttl
         self._local_ids = itertools.count(1)
         self._on_remote: Optional[RemoteHandler] = None
         self._pubsub = None
@@ -87,10 +102,58 @@ class RedisBroker:
             return next(self._local_ids)
 
     def publish(self, wire: dict) -> None:
+        # Persist to the shared history first (durable, cluster-wide replay)…
+        self._append_history(wire)
+        # …then fan the event out live to peer workers.
         try:
             self._redis.publish(self._channel, json.dumps(wire))
         except Exception:  # noqa: BLE001 - publish is best-effort
             logger.warning("stream broker publish failed", exc_info=True)
+
+    def _append_history(self, wire: dict) -> None:
+        """Store an event in a capped, shared sorted set (score = event id).
+
+        Any worker can then replay recent events on ``Last-Event-ID`` reconnect,
+        regardless of which worker produced them or when this worker started —
+        which the per-worker in-memory buffer cannot do. Best-effort: a Redis
+        hiccup must never break emission.
+        """
+        eid = wire.get("id")
+        if not eid:
+            return
+        try:
+            pipe = self._redis.pipeline()
+            pipe.zadd(self.HISTORY_KEY, {json.dumps(wire): eid})
+            # Trim to the newest ``history_maxlen`` (drop the lowest-scored ids).
+            pipe.zremrangebyrank(self.HISTORY_KEY, 0, -self._history_maxlen - 1)
+            pipe.expire(self.HISTORY_KEY, self._history_ttl)
+            pipe.execute()
+        except Exception:  # noqa: BLE001 - history is best-effort
+            logger.warning("stream broker history append failed", exc_info=True)
+
+    def history_since(self, last_event_id: int, limit: Optional[int] = None):
+        """Return wire dicts for events with ``id > last_event_id`` (oldest→newest).
+
+        Returns ``None`` on a Redis error so the manager falls back to its local
+        ring buffer rather than losing replay entirely.
+        """
+        num = limit or self._history_maxlen
+        try:
+            raw = self._redis.zrangebyscore(
+                self.HISTORY_KEY, f"({last_event_id}", "+inf", start=0, num=num
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("stream broker history read failed", exc_info=True)
+            return None
+        out = []
+        for item in raw:
+            if isinstance(item, bytes):
+                item = item.decode("utf-8", "replace")
+            try:
+                out.append(json.loads(item))
+            except (ValueError, TypeError):
+                continue
+        return out
 
     def start(self, on_remote: RemoteHandler) -> None:
         self._on_remote = on_remote

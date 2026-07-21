@@ -54,6 +54,23 @@ def test_estimate_embedding_cost_unknown_or_missing(app_ctx):
     assert trace_service.estimate_embedding_cost("text-embedding-3-small", None) is None
 
 
+def test_embedding_cost_uses_central_pricing_overrides_and_prefix(app_ctx):
+    """A2: embedding cost now flows through app.pricing, so operator overrides and
+    prefix matching apply to embeddings just like chat models."""
+    from app import pricing
+
+    # Prefix match: a versioned embedding name inherits its base model's price.
+    assert trace_service.estimate_embedding_cost("text-embedding-3-small-v2", 1000) == pytest.approx(
+        0.00002
+    )
+    # Runtime override wins (e.g. a self-hosted embedding model priced by the operator).
+    pricing.register_prices({"my-embedder": 0.001})
+    try:
+        assert trace_service.estimate_embedding_cost("my-embedder", 2000) == pytest.approx(0.002)
+    finally:
+        pricing.clear_runtime_prices()
+
+
 def test_create_embedding_trace_derives_tokens_and_cost(app_ctx):
     _, _, _, rt = _seed_retrieval()
     et = rt.embedding_trace
