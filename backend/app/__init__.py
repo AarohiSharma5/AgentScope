@@ -249,6 +249,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.evaluations import evaluations_bp
     from .routes.annotations import annotations_bp
     from .routes.budgets import budgets_bp
+    from .routes.saved_views import saved_views_bp
     from .routes.stream import stream_bp
     from .routes.plugins import plugins_bp
     from .routes.providers import providers_bp
@@ -275,6 +276,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         evaluations_bp,
         annotations_bp,
         budgets_bp,
+        saved_views_bp,
         stream_bp,
         plugins_bp,
         providers_bp,

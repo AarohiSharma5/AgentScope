@@ -119,6 +119,97 @@ function ModelPicker({ value, options, onChange, disabled }) {
   );
 }
 
+// Saved views (custom dashboards): load a named range+model preset, save the
+// current one, or delete the selected preset. Keeps the whole dashboard
+// configuration one click away.
+function ViewsBar({ views, onApply, onSave, onDelete }) {
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+
+  const apply = (id) => {
+    setSelectedId(id);
+    const v = views.find((x) => String(x.id) === String(id));
+    if (v) onApply(v.config || {});
+  };
+  const save = async () => {
+    if (!name.trim()) return;
+    await onSave(name.trim());
+    setName("");
+    setSaving(false);
+  };
+
+  const ctl =
+    "rounded-lg border border-ink-500 bg-ink-700 px-2 py-1 text-xs font-medium text-gray-300";
+
+  return (
+    <div className="inline-flex items-center gap-1.5">
+      {views.length > 0 && (
+        <select
+          value={selectedId}
+          onChange={(e) => apply(e.target.value)}
+          className={`${ctl} text-gray-200`}
+          title="Load a saved view"
+        >
+          <option value="">Saved views…</option>
+          {views.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {selectedId && (
+        <button
+          type="button"
+          onClick={() => {
+            onDelete(selectedId);
+            setSelectedId("");
+          }}
+          className={`${ctl} text-gray-500 hover:text-rose-400`}
+          title="Delete this view"
+        >
+          ✕
+        </button>
+      )}
+      {saving ? (
+        <span className="inline-flex items-center gap-1">
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+            placeholder="View name"
+            className="w-32 rounded-lg border border-ink-500 bg-ink-800 px-2 py-1 text-xs text-gray-200 outline-none focus:border-accent"
+          />
+          <button type="button" onClick={save} className={`${ctl} text-accent`}>
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSaving(false);
+              setName("");
+            }}
+            className={`${ctl} text-gray-500`}
+          >
+            Cancel
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setSaving(true)}
+          className={`${ctl} hover:text-gray-100`}
+          title="Save the current range + model as a view"
+        >
+          + Save view
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Evaluation-count-weighted averages of a metric over the earlier vs. the
 // recent half of the selected window. Busy days count more than quiet ones.
 // Returns null when there isn't enough data on both sides to compare.
@@ -634,7 +725,7 @@ const FINDING_DOT = {
 // of detected findings (regressions, anomalies, cost drivers, budget breaches).
 // The summary is heuristic by default; "Summarize with AI" swaps in an
 // LLM-written narrative when a provider is configured.
-function InsightsCard({ insights, onGenerateAI, aiBusy }) {
+function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy }) {
   if (!insights) return null;
   const { summary, summary_source: source, findings = [] } = insights;
   const isAI = source === "ai";
@@ -649,14 +740,25 @@ function InsightsCard({ insights, onGenerateAI, aiBusy }) {
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onGenerateAI}
-          disabled={aiBusy}
-          className="rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-        >
-          {aiBusy ? "Summarizing…" : "✨ Summarize with AI"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={downloadBusy}
+            className="rounded-lg border border-ink-500 bg-ink-700 px-2.5 py-1 text-xs font-medium text-gray-300 transition-colors hover:text-gray-100 disabled:opacity-50"
+            title="Download this window as a Markdown digest"
+          >
+            {downloadBusy ? "Preparing…" : "↓ Download digest"}
+          </button>
+          <button
+            type="button"
+            onClick={onGenerateAI}
+            disabled={aiBusy}
+            className="rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+          >
+            {aiBusy ? "Summarizing…" : "✨ Summarize with AI"}
+          </button>
+        </div>
       </div>
 
       <p className="text-sm leading-relaxed text-gray-300">{summary}</p>
@@ -946,6 +1048,9 @@ export default function Analytics() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [insights, setInsights] = useState(null);
   const [insightsAiBusy, setInsightsAiBusy] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [savedViews, setSavedViews] = useState([]);
+  const [savedViewVersion, setSavedViewVersion] = useState(0);
 
   // Real-time mode: subscribe to the evaluation stream and, when new evaluations
   // land, bump `liveTick` (debounced) to re-pull every data source. Debouncing
@@ -1050,6 +1155,55 @@ export default function Analytics() {
     } finally {
       setInsightsAiBusy(false);
     }
+  };
+
+  // Download the current window as a Markdown digest. The report matches what's
+  // on screen: if an AI summary is showing, the digest requests one too.
+  const downloadReport = async () => {
+    setReportBusy(true);
+    try {
+      const ai = insights?.summary_source === "ai" ? 1 : undefined;
+      const r = await api.getEvaluationReport({ days, model, ai });
+      const blob = new Blob([r.markdown || ""], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "agentscope-analytics-digest.md";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Non-fatal: nothing downloaded.
+    } finally {
+      setReportBusy(false);
+    }
+  };
+
+  // Saved views (custom dashboards): load / save / delete range+model presets.
+  useEffect(() => {
+    let active = true;
+    api
+      .getSavedViews()
+      .then((r) => active && setSavedViews(r?.data || []))
+      .catch(() => active && setSavedViews([]));
+    return () => {
+      active = false;
+    };
+  }, [savedViewVersion]);
+
+  const applyView = (config) => {
+    setSelectedDate(null);
+    setDays(config.days ?? 90);
+    setModel(config.model || "");
+  };
+  const saveView = async (name) => {
+    await api.createSavedView({ name, config: { days, model } });
+    setSavedViewVersion((v) => v + 1);
+  };
+  const deleteView = async (id) => {
+    await api.deleteSavedView(id);
+    setSavedViewVersion((v) => v + 1);
   };
 
   if (loading) return <Loading label="Loading analytics…" />;
@@ -1159,6 +1313,12 @@ export default function Analytics() {
               })}
             </span>
           )}
+          <ViewsBar
+            views={savedViews}
+            onApply={applyView}
+            onSave={saveView}
+            onDelete={deleteView}
+          />
           <LiveToggle live={live} status={liveStatus} onToggle={() => setLive((v) => !v)} />
           <ModelPicker
             value={model}
@@ -1184,6 +1344,8 @@ export default function Analytics() {
         insights={insights}
         onGenerateAI={generateAiInsights}
         aiBusy={insightsAiBusy}
+        onDownload={downloadReport}
+        downloadBusy={reportBusy}
       />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

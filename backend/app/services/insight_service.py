@@ -297,6 +297,86 @@ def _heuristic_summary(digest: dict, findings: list) -> str:
     return " ".join(parts)
 
 
+_SEVERITY_TAG = {"crit": "CRIT", "warn": "WARN", "info": "INFO"}
+
+
+def render_report_markdown(insights: dict) -> str:
+    """Render an insights payload into a portable Markdown digest.
+
+    This is the exact content a scheduled weekly email / Slack digest would
+    carry; today it's produced on demand for download. Kept a pure function of
+    the :func:`build_insights` payload so a future scheduled job can reuse it
+    verbatim.
+    """
+    window = insights.get("window") or {}
+    digest = insights.get("digest") or {}
+    findings = insights.get("findings") or []
+    source = insights.get("summary_source")
+    model = window.get("model") or "all models"
+
+    lines: list[str] = []
+    lines.append("# AgentScope Analytics Digest")
+    lines.append("")
+    lines.append(
+        f"_Generated {insights.get('generated_at', '')} · "
+        f"Window: {window.get('label', 'n/a')} · Model: {model}_"
+    )
+    lines.append("")
+
+    lines.append("## Summary")
+    summary = insights.get("summary", "")
+    if source == "ai":
+        summary += "  \n_(AI-generated)_"
+    lines.append(summary)
+    lines.append("")
+
+    lines.append("## Key metrics")
+    lines.append("| Metric | Value |")
+    lines.append("| --- | --- |")
+    lines.append(f"| Evaluations | {digest.get('evaluations', 0)} |")
+    lines.append(f"| Avg score | {_fmt_score(digest.get('avg_score'))} |")
+    lines.append(f"| Cost / eval | {_fmt_cost(digest.get('cost_per_eval'))} |")
+    lines.append(f"| Total cost | {_fmt_cost(digest.get('total_cost'))} |")
+    lines.append(f"| Avg latency | {_fmt_ms(digest.get('avg_latency_ms'))} |")
+    lines.append(f"| Failure rate | {_fmt_pct(digest.get('failure_rate'))} |")
+    lines.append("")
+
+    lines.append("## Findings")
+    if findings:
+        for f in findings:
+            tag = _SEVERITY_TAG.get(f.get("severity"), "INFO")
+            lines.append(f"- **[{tag}] {f.get('title')}.** {f.get('detail')}")
+    else:
+        lines.append("No notable findings.")
+    lines.append("")
+
+    by_model = digest.get("by_model") or []
+    if by_model:
+        lines.append("## By model")
+        lines.append("| Model | Evals | Avg score | Avg cost | Failure rate |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for m in by_model:
+            lines.append(
+                f"| {m.get('model')} | {m.get('evaluations')} | "
+                f"{_fmt_score(m.get('average_evaluation_score'))} | "
+                f"{_fmt_cost(m.get('average_cost'))} | "
+                f"{_fmt_pct(m.get('failure_rate'))} |"
+            )
+        lines.append("")
+
+    lp = digest.get("latency_percentiles") or {}
+    if any(lp.get(k) is not None for k in ("p50", "p95", "p99")):
+        lines.append("## Latency percentiles")
+        lines.append("| p50 | p95 | p99 |")
+        lines.append("| --- | --- | --- |")
+        lines.append(
+            f"| {_fmt_ms(lp.get('p50'))} | {_fmt_ms(lp.get('p95'))} | {_fmt_ms(lp.get('p99'))} |"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def generate_ai_summary(
     digest: dict,
     findings: list,

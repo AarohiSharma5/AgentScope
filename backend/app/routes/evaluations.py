@@ -16,7 +16,7 @@ callables that cannot be expressed in JSON, so they are only available through
 the SDK. Likewise evaluations use the built-in rule-based evaluators (an
 LLM-as-a-Judge needs a callable judge supplied in-process).
 """
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from ..comparison import ComparisonError, ModelComparisonEngine
 from ..errors import error_response
@@ -508,3 +508,52 @@ def evaluation_insights():
         else:
             data["summary_source"] = "ai_unavailable"
     return jsonify(data)
+
+
+@evaluations_bp.get("/dashboard/evaluation-report")
+def evaluation_report():
+    """Return a shareable analytics digest (the content of a weekly report).
+
+    Same ``?days=`` / ``?model=`` / ``?ai=`` semantics as the insights endpoint.
+    ``?format=md`` returns a downloadable ``text/markdown`` file; otherwise JSON
+    ``{markdown, generated_at, ...}`` is returned so the client can preview or
+    download it.
+    """
+    try:
+        days = _int_arg("days")
+    except ValueError:
+        return error_response("days must be an integer", 400)
+    if days is None:
+        days = 90
+    elif days <= 0:
+        days = None  # all history
+    else:
+        days = min(days, 365)
+    model = (request.args.get("model") or "").strip() or None
+
+    data = insight_service.build_insights(days=days, model=model)
+    if (request.args.get("ai") or "").strip().lower() in ("1", "true", "yes"):
+        summary = insight_service.generate_ai_summary(data["digest"], data["findings"])
+        if summary:
+            data["summary"] = summary
+            data["summary_source"] = "ai"
+        else:
+            data["summary_source"] = "ai_unavailable"
+
+    markdown = insight_service.render_report_markdown(data)
+
+    if (request.args.get("format") or "").strip().lower() in ("md", "markdown"):
+        filename = "agentscope-analytics-digest.md"
+        return Response(
+            markdown,
+            mimetype="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    return jsonify(
+        {
+            "generated_at": data["generated_at"],
+            "window": data["window"],
+            "summary_source": data["summary_source"],
+            "markdown": markdown,
+        }
+    )

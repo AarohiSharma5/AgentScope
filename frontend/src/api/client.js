@@ -273,6 +273,13 @@ export const api = {
   createBudget: (body, opts) => post("/budgets", body, opts),
   deleteBudget: (id, opts) => del(`/budgets/${id}`, opts),
 
+  // Saved analytics views (custom dashboards) + shareable digest report
+  getSavedViews: (opts) => request("/saved-views", opts),
+  createSavedView: (body, opts) => post("/saved-views", body, opts),
+  deleteSavedView: (id, opts) => del(`/saved-views/${id}`, opts),
+  getEvaluationReport: (params, opts) =>
+    request(`/dashboard/evaluation-report${buildQuery(params)}`, opts),
+
   // v0.5 — prompt versions, prompt diff and trace diff
   getPromptVersions: (params, opts) => request(`/prompt-versions${buildQuery(params)}`, opts),
   getPromptVersion: (id, opts) => request(`/prompt-versions/${id}`, opts),

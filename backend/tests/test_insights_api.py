@@ -106,3 +106,21 @@ def test_insights_ai_unavailable_falls_back(client, monkeypatch):
     data = client.get("/api/dashboard/evaluation-insights?ai=1").get_json()
     assert data["summary_source"] == "ai_unavailable"
     assert data["summary"]  # heuristic summary still present
+
+
+def test_report_json_and_markdown_download(client, conversation):
+    client.post("/api/evaluations", json={
+        "conversation_run_id": conversation, "reference": _ANSWER, "cost_budget": 1.0})
+
+    # JSON form returns the rendered markdown for preview.
+    data = client.get("/api/dashboard/evaluation-report").get_json()
+    assert "markdown" in data
+    assert data["markdown"].startswith("# AgentScope Analytics Digest")
+    assert "## Key metrics" in data["markdown"]
+
+    # format=md returns a downloadable markdown file.
+    resp = client.get("/api/dashboard/evaluation-report?format=md")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/markdown"
+    assert "attachment" in resp.headers.get("Content-Disposition", "")
+    assert b"# AgentScope Analytics Digest" in resp.data
