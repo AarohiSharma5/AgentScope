@@ -115,6 +115,23 @@ function providerOf(model) {
   return "Other";
 }
 
+// Distinct color per provider so the cross-provider comparison reads visually
+// in the quadrant. Full literal class strings so Tailwind's JIT keeps them.
+const PROVIDER_COLORS = {
+  OpenAI: "bg-teal-500/80 border-teal-300",
+  Anthropic: "bg-amber-500/80 border-amber-300",
+  Google: "bg-sky-500/80 border-sky-300",
+  Meta: "bg-blue-500/80 border-blue-300",
+  Mistral: "bg-orange-500/80 border-orange-300",
+  Cohere: "bg-pink-500/80 border-pink-300",
+  xAI: "bg-slate-400/80 border-slate-200",
+  Other: "bg-gray-500/80 border-gray-300",
+};
+
+function providerColor(provider) {
+  return PROVIDER_COLORS[provider] || PROVIDER_COLORS.Other;
+}
+
 // Quality per dollar: how much evaluation score each dollar buys. The headline
 // "value" metric that ties cost to outcome (higher is better).
 function qualityPerDollar(row) {
@@ -293,7 +310,8 @@ export default function Analytics() {
   const totals = analytics?.totals || {};
   const daily = analytics?.daily || [];
   const byModel = analytics?.by_model || [];
-  // Models plottable on the cost/quality quadrant (need both dimensions).
+  // Models plottable on the cost/quality quadrant (need both dimensions),
+  // colored by provider so the cross-provider comparison is visual.
   const costQuality = byModel
     .filter((m) => m.average_cost != null && m.average_evaluation_score != null)
     .map((m) => ({
@@ -301,7 +319,12 @@ export default function Analytics() {
       y: m.average_evaluation_score,
       label: m.model,
       size: m.evaluations,
+      color: providerColor(providerOf(m.model)),
     }));
+  // Legend of the providers actually present on the quadrant.
+  const providerLegend = [...new Set(costQuality.map((p) => providerOf(p.label)))].map(
+    (name) => ({ label: name, color: providerColor(name) })
+  );
   const label = (d) => dayLabel(d.date);
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
@@ -430,6 +453,7 @@ export default function Analytics() {
             xLabel="Cost"
             yLabel="Score"
             label="Cost versus quality by model"
+            legend={providerLegend}
           />
         </ChartCard>
       )}

@@ -22,6 +22,7 @@ export default function ScatterChart({
   height = 260,
   emptyMessage = "No data to chart.",
   label = "Scatter chart",
+  legend = [],
 }) {
   const points = data.filter((d) => d.x != null && d.y != null);
   if (points.length === 0) {
@@ -87,12 +88,15 @@ export default function ScatterChart({
           {points.map((d, i) => {
             const cheap = xMed == null || d.x <= xMed;
             const good = yMed == null || d.y >= yMed;
+            // A per-point color (e.g. by provider) takes precedence; otherwise
+            // fall back to encoding the quadrant (ideal green / worst red).
             const color =
-              cheap && good
+              d.color ||
+              (cheap && good
                 ? "bg-emerald-500/80 border-emerald-300"
                 : !cheap && !good
                   ? "bg-rose-500/80 border-rose-300"
-                  : "bg-accent/80 border-accent";
+                  : "bg-accent/80 border-accent");
             const r = radius(d.size);
             return (
               <div
@@ -116,6 +120,16 @@ export default function ScatterChart({
       <div className="mt-1 pl-5 text-right text-[10px] uppercase tracking-wider text-gray-500">
         {xLabel} →
       </div>
+      {legend.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-5" aria-hidden="true">
+          {legend.map((g) => (
+            <span key={g.label} className="inline-flex items-center gap-1.5 text-[11px] text-gray-400">
+              <span className={`h-2.5 w-2.5 rounded-full border ${g.color}`} />
+              {g.label}
+            </span>
+          ))}
+        </div>
+      )}
       <ChartFallbackTable caption={label} rows={rows} />
     </figure>
   );
