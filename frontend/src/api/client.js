@@ -20,6 +20,7 @@ import {
   setTokens,
 } from "./authStore.js";
 import { API_BASE } from "./config.js";
+import { DEMO_READONLY_MESSAGE, IS_DEMO } from "../lib/demo.js";
 
 const BASE = API_BASE;
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -111,6 +112,14 @@ async function core(
   { body, signal, timeout = DEFAULT_TIMEOUT_MS, _retriedAuth = false } = {}
 ) {
   const isGet = method === "GET";
+
+  // Read-only demo safety net: block every mutating request before it leaves the
+  // browser, with a clear message. This covers all current and future action
+  // buttons even if one isn't individually hidden (the backend also enforces it).
+  if (IS_DEMO && !isGet) {
+    throw new ApiError(DEMO_READONLY_MESSAGE, 403);
+  }
+
   const maxAttempts = isGet ? MAX_GET_RETRIES + 1 : 1;
   let lastError;
 

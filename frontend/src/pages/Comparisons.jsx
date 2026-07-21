@@ -10,6 +10,7 @@ import Loading from "../components/ui/Loading.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
 import { usePaginatedList } from "../lib/usePaginatedList.js";
+import { IS_DEMO } from "../lib/demo.js";
 
 const LIMIT = 20;
 
@@ -253,13 +254,15 @@ export default function Comparisons() {
         </div>
       )}
 
-      <Section title="Run a comparison">
-        <NewComparisonForm
-          onCreated={refresh}
-          dayConversations={dayConversations}
-          prefillConversationId={prefillConversationId}
-        />
-      </Section>
+      {!IS_DEMO && (
+        <Section title="Run a comparison">
+          <NewComparisonForm
+            onCreated={refresh}
+            dayConversations={dayConversations}
+            prefillConversationId={prefillConversationId}
+          />
+        </Section>
+      )}
 
       <div className="flex items-center justify-end">
         <SearchInput value={search} onChange={setSearch} placeholder="Search by model or winner…" />

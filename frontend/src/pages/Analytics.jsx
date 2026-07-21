@@ -11,6 +11,7 @@ import BarChart from "../components/charts/BarChart.jsx";
 import LineChart from "../components/charts/LineChart.jsx";
 import ScatterChart from "../components/charts/ScatterChart.jsx";
 import { fmtCost, fmtLatency, fmtNumber, fmtScore } from "../lib/format.js";
+import { IS_DEMO } from "../lib/demo.js";
 
 // Short "Jul 3" label from an ISO date (YYYY-MM-DD).
 function dayLabel(iso) {
@@ -1391,12 +1392,14 @@ export default function Analytics() {
               })}
             </span>
           )}
-          <ViewsBar
-            views={savedViews}
-            onApply={applyView}
-            onSave={saveView}
-            onDelete={deleteView}
-          />
+          {!IS_DEMO && (
+            <ViewsBar
+              views={savedViews}
+              onApply={applyView}
+              onSave={saveView}
+              onDelete={deleteView}
+            />
+          )}
           <LiveToggle live={live} status={liveStatus} onToggle={() => setLive((v) => !v)} />
           <ModelPicker
             value={model}
@@ -1472,12 +1475,14 @@ export default function Analytics() {
 
       {daily.length >= 2 && <AlertsPanel alerts={alerts} onSelectDate={setSelectedDate} />}
 
-      <BudgetsCard
-        budgets={budgets}
-        availableModels={availableModels}
-        onAdd={addBudget}
-        onDelete={removeBudget}
-      />
+      {!IS_DEMO && (
+        <BudgetsCard
+          budgets={budgets}
+          availableModels={availableModels}
+          onAdd={addBudget}
+          onDelete={removeBudget}
+        />
+      )}
 
       <PercentilesCard percentiles={percentiles} />
 
@@ -1583,11 +1588,13 @@ export default function Analytics() {
         </div>
       )}
 
-      <AnnotationsCard
-        annotations={annotations}
-        onAdd={addAnnotation}
-        onDelete={removeAnnotation}
-      />
+      {!IS_DEMO && (
+        <AnnotationsCard
+          annotations={annotations}
+          onAdd={addAnnotation}
+          onDelete={removeAnnotation}
+        />
+      )}
     </div>
   );
 }

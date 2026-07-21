@@ -24,6 +24,53 @@ AgentScope has since grown five layers of observability, all sharing the same `T
 
 ---
 
+## Live demo
+
+**Try it instantly — no signup, nothing to install:**
+
+### → https://agentscope-demo-web.onrender.com
+
+<!-- Replace the URL above with your deployed Render web URL. -->
+
+Click through **Requests, Agent Runs, RAG Observatory, Workflows, Conversations,
+Replays, Evaluations, Comparisons, Diffs, Analytics** and the real-time **Live**
+view to see what a fully-instrumented AI app looks like. The demo is **read-only**
+and seeded with realistic sample data that resets periodically.
+
+> The first request after the demo has been idle may take ~30–50s to wake (free hosting).
+
+### See *your own* traces in 60 seconds
+
+The demo shows sample data; to watch your own app light up, run AgentScope locally
+and point your code at it:
+
+```bash
+# 1. Run AgentScope (dashboard on http://localhost:5173, API on :8000)
+git clone https://github.com/AarohiSharma5/AgentScope && cd AgentScope
+docker compose up -d
+```
+
+```bash
+# 2. Install the dependency-free SDK
+pip install agentscope-lite
+```
+
+```python
+# 3. Auto-instrument your LLM calls — no code changes to your call sites
+import agentscope
+agentscope.configure(endpoint="http://localhost:8000/api")
+agentscope.instrument_openai()   # also: instrument_anthropic(), instrument_gemini()
+
+# ...now use the OpenAI SDK exactly as you already do — every call is traced,
+# with prompts, tokens, cost, latency and status showing up on the dashboard.
+```
+
+Already using **OpenTelemetry, LangChain or LlamaIndex**? Skip the SDK and point
+your existing exporter/callback handler at AgentScope — see the
+[SDK reference](docs/reference/sdk.md) and [REST API](docs/reference/rest-api.md).
+
+---
+
 ## Documentation
 
 Complete documentation lives in [`docs/`](docs/README.md): Getting Started,

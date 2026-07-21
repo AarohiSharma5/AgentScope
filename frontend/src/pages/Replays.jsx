@@ -7,6 +7,7 @@ import TableSkeleton from "../components/ui/TableSkeleton.jsx";
 import EmptyState from "../components/ui/EmptyState.jsx";
 import ErrorState from "../components/ui/ErrorState.jsx";
 import { usePaginatedList } from "../lib/usePaginatedList.js";
+import { IS_DEMO } from "../lib/demo.js";
 
 const LIMIT = 20;
 
@@ -105,7 +106,11 @@ export default function Replays() {
         />
       ) : (
         <>
-          <ReplaysTable replays={replays} onReplayAgain={replayAgain} busyId={busyId} />
+          <ReplaysTable
+            replays={replays}
+            onReplayAgain={IS_DEMO ? undefined : replayAgain}
+            busyId={busyId}
+          />
           <Pagination
             page={pagination.page}
             pages={pagination.pages}

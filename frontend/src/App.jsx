@@ -22,6 +22,7 @@ import Live from "./pages/Live.jsx";
 import Login from "./pages/Login.jsx";
 import EmptyState from "./components/ui/EmptyState.jsx";
 import { useAuth } from "./lib/AuthContext.jsx";
+import { IS_DEMO } from "./lib/demo.js";
 
 function NotFound() {
   return (
@@ -42,7 +43,7 @@ function NotFound() {
 }
 
 function DemoBanner() {
-  if (import.meta.env.VITE_DEMO_MODE !== "true") return null;
+  if (!IS_DEMO) return null;
   return (
     <div className="bg-amber-500/15 text-amber-200 border-b border-amber-500/30">
       <div className="mx-auto max-w-6xl px-6 py-2 text-center text-xs sm:text-sm">
