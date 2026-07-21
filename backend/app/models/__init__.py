@@ -12,3 +12,4 @@ from . import workflow_trace  # noqa: F401  (v0.4 multi-agent workflow orchestra
 from . import evaluation_trace  # noqa: F401  (v0.5 replay & evaluation)
 from . import auth  # noqa: F401  (v1.0 users, orgs, projects, api keys, audit logs)
 from . import annotation  # noqa: F401  (timeline deploy/change annotations)
+from . import budget  # noqa: F401  (budgets / SLOs / metric thresholds)

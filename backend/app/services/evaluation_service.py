@@ -605,6 +605,74 @@ def _analytics_by_model(since: Optional[datetime]) -> list[dict]:
     return out
 
 
+def metric_value(
+    metric: str, days: Optional[int] = None, model: Optional[str] = None
+) -> Optional[float]:
+    """Current value of a single dashboard metric over a window (for budgets/SLOs).
+
+    Supports ``cost`` (total spend over the window), ``avg_score``,
+    ``failure_rate`` and ``avg_latency``. Reuses the same tenant-scoping,
+    date-bounding and generating-model filtering as the analytics series, so a
+    budget's status is computed over exactly the population it claims to. Returns
+    ``None`` when there is no data to evaluate (except ``cost``, where "no spend"
+    is a meaningful ``0.0``).
+    """
+    since = utcnow() - timedelta(days=days) if days and days > 0 else None
+    conv_filter = (
+        EvaluationRun.conversation_run_id.in_(_model_conversation_ids(model))
+        if model
+        else None
+    )
+
+    def scoped_runs(query):
+        query = _scoped(query, EvaluationRun.organization_id)
+        if since is not None:
+            query = query.filter(EvaluationRun.created_at >= since)
+        if conv_filter is not None:
+            query = query.filter(conv_filter)
+        return query
+
+    if metric == "avg_score":
+        return _round(
+            scoped_runs(db.session.query(func.avg(EvaluationRun.overall_score))).scalar(), 4
+        )
+
+    if metric == "failure_rate":
+        total = scoped_runs(db.session.query(func.count(EvaluationRun.id))).scalar() or 0
+        if not total:
+            return None
+        failed = (
+            scoped_runs(db.session.query(func.count(EvaluationRun.id)))
+            .filter(EvaluationRun.status == AgentStatus.FAILED)
+            .scalar()
+            or 0
+        )
+        return round(failed / total, 4)
+
+    # cost + latency work off the distinct evaluated conversations in the window.
+    conv_ids = scoped_runs(db.session.query(EvaluationRun.conversation_run_id)).distinct()
+
+    if metric == "avg_latency":
+        val = (
+            db.session.query(func.avg(ConversationRun.latency_ms))
+            .filter(ConversationRun.id.in_(conv_ids), ConversationRun.latency_ms.isnot(None))
+            .scalar()
+        )
+        return round(val, 2) if val is not None else None
+
+    if metric == "cost":
+        total = (
+            db.session.query(func.coalesce(func.sum(AgentStep.cost), 0.0))
+            .select_from(AgentNode)
+            .join(AgentStep, AgentStep.agent_run_id == AgentNode.agent_run_id)
+            .filter(AgentNode.conversation_run_id.in_(conv_ids))
+            .scalar()
+        ) or 0.0
+        return round(total, 6)
+
+    return None
+
+
 def _round(value: Optional[float], places: int) -> Optional[float]:
     """Round an optional number to ``places`` decimals, preserving None."""
     return round(value, places) if value is not None else None

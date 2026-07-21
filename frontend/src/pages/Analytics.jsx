@@ -591,6 +591,199 @@ function AnnotationsCard({ annotations, onAdd, onDelete }) {
   );
 }
 
+// Metric metadata for budgets: display label, value formatter, natural
+// guardrail direction and a placeholder hint for the threshold input.
+const pctFmt = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+const BUDGET_METRIC_META = {
+  cost: { label: "Total cost", fmt: fmtCost, dir: "lte", hint: "e.g. 50" },
+  avg_score: { label: "Avg score", fmt: fmtScore, dir: "gte", hint: "0–1, e.g. 0.85" },
+  failure_rate: { label: "Failure rate", fmt: pctFmt, dir: "lte", hint: "0–1, e.g. 0.05" },
+  avg_latency: { label: "Avg latency", fmt: fmtLatency, dir: "lte", hint: "ms, e.g. 2000" },
+};
+
+const BUDGET_STATUS = {
+  ok: { badge: "bg-emerald-500/15 text-emerald-300", bar: "bg-emerald-500/70", label: "On track" },
+  warn: { badge: "bg-amber-500/15 text-amber-300", bar: "bg-amber-500/80", label: "At risk" },
+  breach: { badge: "bg-rose-500/15 text-rose-300", bar: "bg-rose-500/80", label: "Breached" },
+  unknown: { badge: "bg-ink-600 text-gray-400", bar: "bg-ink-500", label: "No data" },
+};
+
+// Budgets / SLOs: create, list and monitor cost caps and quality/latency/
+// failure thresholds. Each row shows a progress bar toward the threshold plus an
+// on-track / at-risk / breached badge, evaluated over the budget's own window.
+function BudgetsCard({ budgets, availableModels, onAdd, onDelete }) {
+  const [name, setName] = useState("");
+  const [metric, setMetric] = useState("cost");
+  const [threshold, setThreshold] = useState("");
+  const [windowDays, setWindowDays] = useState(30);
+  const [model, setModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const meta = BUDGET_METRIC_META[metric] || {};
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const value = Number(threshold);
+    if (!name.trim() || !threshold || Number.isNaN(value) || value <= 0) {
+      setError("Name and a threshold greater than 0 are required.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onAdd({
+        name: name.trim(),
+        metric,
+        threshold_value: value,
+        window_days: Number(windowDays) || 0,
+        model: model || undefined,
+      });
+      setName("");
+      setThreshold("");
+      setModel("");
+    } catch (err) {
+      setError(err.message || "Failed to add budget.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls =
+    "rounded-lg border border-ink-500 bg-ink-800 px-3 py-1.5 text-sm text-gray-200 outline-none focus:border-accent";
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-gray-200">Budgets &amp; SLOs</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Set a cost cap or a quality / latency / failure target. Each is checked over its own
+          window and flags itself when at risk or breached.
+        </p>
+      </div>
+
+      <form onSubmit={submit} className="mb-4 flex flex-wrap items-end gap-2">
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Monthly cost cap"
+            className={`w-40 ${inputCls}`}
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Metric</label>
+          <select value={metric} onChange={(e) => setMetric(e.target.value)} className={inputCls}>
+            {Object.entries(BUDGET_METRIC_META).map(([value, m]) => (
+              <option key={value} value={value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">
+            {meta.dir === "gte" ? "Min (≥)" : "Max (≤)"}
+          </label>
+          <input
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            placeholder={meta.hint}
+            inputMode="decimal"
+            className={`w-28 ${inputCls}`}
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Window</label>
+          <select
+            value={windowDays}
+            onChange={(e) => setWindowDays(Number(e.target.value))}
+            className={inputCls}
+          >
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+            <option value={0}>All time</option>
+          </select>
+        </div>
+        {availableModels && availableModels.length > 0 && (
+          <div className="flex flex-col">
+            <label className="mb-1 text-[10px] uppercase tracking-wider text-gray-500">Model</label>
+            <select value={model} onChange={(e) => setModel(e.target.value)} className={inputCls}>
+              <option value="">All models</option>
+              {availableModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={busy}
+          className="rounded-lg bg-accent/90 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent disabled:opacity-50"
+        >
+          {busy ? "Adding…" : "Add"}
+        </button>
+      </form>
+      {error && <p className="mb-3 text-xs text-rose-400">{error}</p>}
+
+      {budgets.length === 0 ? (
+        <p className="text-sm text-gray-500">No budgets yet.</p>
+      ) : (
+        <ul className="space-y-3">
+          {budgets.map((b) => {
+            const m = BUDGET_METRIC_META[b.metric] || {};
+            const fmt = m.fmt || ((v) => v);
+            const st = BUDGET_STATUS[b.status] || BUDGET_STATUS.unknown;
+            const arrow = b.comparison === "gte" ? "≥" : "≤";
+            const fillPct = Math.min(Math.max(b.ratio || 0, 0), 1) * 100;
+            const windowLabel = b.window_days ? `${b.window_days}d` : "all time";
+            return (
+              <li key={b.id} className="rounded-lg border border-ink-600/50 px-3 py-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-sm text-gray-200">{b.name}</span>
+                    <span className="ml-2 text-xs text-gray-500">
+                      {m.label} {arrow} {fmt(b.threshold_value)} · {windowLabel}
+                      {b.model ? ` · ${b.model}` : ""}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase ${st.badge}`}>
+                      {st.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(b.id)}
+                      className="text-xs text-gray-500 transition-colors hover:text-rose-400"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-700">
+                    <div
+                      className={`h-full rounded-full ${st.bar}`}
+                      style={{ width: `${fillPct}%` }}
+                    />
+                  </div>
+                  <span className="w-28 shrink-0 text-right font-mono text-xs text-gray-400">
+                    {b.actual == null ? "—" : `${fmt(b.actual)} now`}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // Breakdown of a single day, shown when a chart point is clicked.
 function DayDetail({ day, onClear }) {
   const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
@@ -647,6 +840,8 @@ export default function Analytics() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [annoVersion, setAnnoVersion] = useState(0);
+  const [budgets, setBudgets] = useState([]);
+  const [budgetVersion, setBudgetVersion] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -684,6 +879,29 @@ export default function Analytics() {
   const removeAnnotation = async (id) => {
     await api.deleteAnnotation(id);
     setAnnoVersion((v) => v + 1);
+  };
+
+  // Budgets are independent of the page's range/model pickers — each carries its
+  // own window and optional model — so they only refetch when one is added or
+  // removed. `budgetVersion` also re-syncs their live status after new evals.
+  useEffect(() => {
+    let active = true;
+    api
+      .getBudgets()
+      .then((r) => active && setBudgets(r?.data || []))
+      .catch(() => active && setBudgets([]));
+    return () => {
+      active = false;
+    };
+  }, [budgetVersion]);
+
+  const addBudget = async (payload) => {
+    await api.createBudget(payload);
+    setBudgetVersion((v) => v + 1);
+  };
+  const removeBudget = async (id) => {
+    await api.deleteBudget(id);
+    setBudgetVersion((v) => v + 1);
   };
 
   if (loading) return <Loading label="Loading analytics…" />;
@@ -847,6 +1065,13 @@ export default function Analytics() {
       </div>
 
       {daily.length >= 2 && <AlertsPanel alerts={alerts} onSelectDate={setSelectedDate} />}
+
+      <BudgetsCard
+        budgets={budgets}
+        availableModels={availableModels}
+        onAdd={addBudget}
+        onDelete={removeBudget}
+      />
 
       <PercentilesCard percentiles={percentiles} />
 

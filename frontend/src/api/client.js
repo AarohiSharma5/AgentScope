@@ -266,6 +266,11 @@ export const api = {
   createAnnotation: (body, opts) => post("/annotations", body, opts),
   deleteAnnotation: (id, opts) => del(`/annotations/${id}`, opts),
 
+  // Budgets / SLOs (cost caps + quality/latency/failure thresholds)
+  getBudgets: (opts) => request("/budgets", opts),
+  createBudget: (body, opts) => post("/budgets", body, opts),
+  deleteBudget: (id, opts) => del(`/budgets/${id}`, opts),
+
   // v0.5 — prompt versions, prompt diff and trace diff
   getPromptVersions: (params, opts) => request(`/prompt-versions${buildQuery(params)}`, opts),
   getPromptVersion: (id, opts) => request(`/prompt-versions/${id}`, opts),
