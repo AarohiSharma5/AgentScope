@@ -25,7 +25,7 @@ from app import create_app
 from app.extensions import db
 from app.models.agent_trace import AgentRun, AgentStatus, AgentStep
 from app.models.evaluation_trace import EvaluationRun
-from app.models.trace import Trace
+from app.models.trace import Trace, TraceStatus
 from app.models.workflow_trace import AgentNode, ConversationRun
 from app.services import annotation_service, budget_service
 from app.utils.timeutils import utcnow
@@ -44,12 +44,56 @@ E_QUALITY_REGRESSION = 44   # Claude prompt change tanks quality + raises failur
 E_COST_REGRESSION = 10      # gpt-4o context bump roughly doubles per-eval cost
 E_LATENCY_INCIDENT = 6      # one-day latency spike across all models
 
+# Each prompt belongs to an application (area of concern) with its own system
+# prompt — so the Requests/Agent Runs "Application" filter is meaningful and rows
+# aren't left "untagged".
+APPLICATIONS = {
+    "support-copilot": (
+        "You are a helpful, empathetic customer-support agent. Be concise, "
+        "professional and never invent account details."
+    ),
+    "meeting-notes": (
+        "You extract concise, accurate action items from meeting transcripts. "
+        "List owners and due dates when stated; never invent them."
+    ),
+    "intent-router": (
+        "You classify each user message into exactly one intent label. Answer "
+        "with the label only."
+    ),
+    "docs-qa": (
+        "You answer questions using ONLY the provided documentation. If the answer "
+        "isn't in the docs, say so."
+    ),
+}
+
+# (prompt, application, sample answer) — the answer populates the Requests row's
+# response and the trace's final_response so rows read like real traffic.
 _PROMPTS = [
-    "Summarize this support ticket and suggest next steps.",
-    "Draft a reply to the customer's refund request.",
-    "Extract the action items from this meeting transcript.",
-    "Classify the intent of this user message.",
-    "Given these docs, answer the user's billing question.",
+    (
+        "Summarize this support ticket and suggest next steps.",
+        "support-copilot",
+        "Customer reports a failed payment; verify the card, retry, and follow up in 24h.",
+    ),
+    (
+        "Draft a reply to the customer's refund request.",
+        "support-copilot",
+        "Apologize, confirm the refund to the original method, and share the 3–5 day timeline.",
+    ),
+    (
+        "Extract the action items from this meeting transcript.",
+        "meeting-notes",
+        "1) Ship the billing fix (Alex, Fri). 2) Draft the Q3 recap (Sam). 3) Book the review.",
+    ),
+    (
+        "Classify the intent of this user message.",
+        "intent-router",
+        "billing_question",
+    ),
+    (
+        "Given these docs, answer the user's billing question.",
+        "docs-qa",
+        "Invoices are issued on the 1st; usage over the plan is billed at the listed overage rate.",
+    ),
 ]
 
 
@@ -69,9 +113,22 @@ def _build_eval(when, model: str, prof: dict, rng: random.Random) -> list:
     tokens_out = max(20, int(rng.gauss(420, 90)))
     status = AgentStatus.FAILED if failed else AgentStatus.SUCCESS
 
+    prompt, app, answer = rng.choice(_PROMPTS)
     trace = Trace(
-        user_prompt=rng.choice(_PROMPTS),
+        project=app,
+        system_prompt=APPLICATIONS[app],
+        user_prompt=prompt,
+        final_response=None if failed else answer,
         model_name=model,
+        # Populate the request-level metrics so the Requests list shows real
+        # tokens/cost/latency (not "—") — these mirror the step below.
+        input_tokens=tokens_in,
+        output_tokens=tokens_out,
+        total_tokens=tokens_in + tokens_out,
+        estimated_cost=round(cost, 6),
+        latency_ms=round(latency, 2),
+        status=TraceStatus.FAILED if failed else TraceStatus.SUCCESS,
+        error_message="RateLimitError: 429" if failed else None,
         timestamp=when,
     )
     conv = ConversationRun(

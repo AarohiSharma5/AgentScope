@@ -62,6 +62,83 @@ AREAS = {
         "You are a helpful, empathetic customer-support agent. Be concise, "
         "professional and never make up account details."
     ),
+    "data-insights": (
+        "You are a data analyst. Answer with concrete numbers from the provided "
+        "tables, state assumptions, and never invent figures."
+    ),
+    "product-search": (
+        "You are a shopping assistant. Recommend only in-catalog products that "
+        "match the user's stated constraints; never fabricate SKUs or prices."
+    ),
+}
+
+# A pool of realistic prompts per application, used to generate a high volume of
+# request traffic (the Requests tab / Analytics) that looks organic rather than
+# like a handful of hand-written rows.
+AREA_PROMPTS = {
+    "revenue-analytics": [
+        "Summarize the Q3 2026 earnings call in three bullets.",
+        "What was net revenue retention last quarter?",
+        "Break down revenue by region for the last two quarters.",
+        "How did gross margin trend over the last year?",
+        "Which product line grew fastest this quarter?",
+        "Compare CAC and LTV for the enterprise segment.",
+        "What drove the change in operating expenses?",
+    ],
+    "code-assistant": [
+        "Write a Python function to deduplicate a list preserving order.",
+        "Refactor this nested loop to reduce time complexity.",
+        "Explain why this async function never resolves.",
+        "Add type hints and a docstring to this function.",
+        "Suggest three unit tests for a token-bucket rate limiter.",
+        "Convert this callback-based code to async/await.",
+        "Find the off-by-one bug in this binary search.",
+        "Write a SQL migration to add a nullable column with an index.",
+    ],
+    "eng-education": [
+        "Explain the CAP theorem to a new backend engineer.",
+        "What are the trade-offs of microservices vs a monolith?",
+        "How does a bloom filter work and when should I use one?",
+        "Explain database isolation levels with examples.",
+        "What changed between HTTP/1.1 and HTTP/2 for latency?",
+        "Describe how consistent hashing balances load.",
+        "When would you pick a message queue over direct RPC?",
+    ],
+    "customer-support": [
+        "Draft a polite follow-up email to a client who went quiet.",
+        "Customer can't reset their password — outline the next steps.",
+        "Write an apology for a delayed shipment with a discount offer.",
+        "Summarize this angry ticket and suggest a calm reply.",
+        "Explain our refund policy to a confused customer.",
+        "Draft a churn-risk save email for a downgrading account.",
+    ],
+    "data-insights": [
+        "Which cohort has the best 90-day retention?",
+        "What's the weekly active user trend this month?",
+        "Segment revenue by plan tier and show the split.",
+        "Find the top 5 features by adoption in the last 30 days.",
+        "Is there a correlation between onboarding time and churn?",
+        "Summarize funnel drop-off from signup to activation.",
+    ],
+    "product-search": [
+        "Find a waterproof hiking backpack under $120.",
+        "Recommend a quiet mechanical keyboard for an office.",
+        "I need running shoes for flat feet, size 10.",
+        "Show noise-cancelling headphones with 30h+ battery.",
+        "Suggest a birthday gift for a coffee lover under $50.",
+        "Find a 4K monitor with USB-C power delivery.",
+    ],
+}
+
+# Candidate models per application (realistic: teams mix a workhorse model with a
+# cheaper/faster one). All exist in the price table so cost is populated.
+AREA_MODELS = {
+    "revenue-analytics": ["gpt-4o", "claude-3-5-sonnet", "gpt-4-turbo"],
+    "code-assistant": ["gpt-4o-mini", "claude-3-5-sonnet", "gpt-4o"],
+    "eng-education": ["gpt-4o", "gpt-4-turbo", "claude-3-haiku"],
+    "customer-support": ["gpt-4o-mini", "gpt-3.5-turbo", "claude-3-haiku"],
+    "data-insights": ["gpt-4o", "gpt-4o-mini"],
+    "product-search": ["gpt-4o-mini", "claude-3-haiku", "gpt-3.5-turbo"],
 }
 
 # The scenario Q&A below are all financial research, so they belong to one area.
@@ -123,9 +200,21 @@ SCENARIOS = [
         "Next quarter hiring plan: 8 engineering, 4 sales, 2 support (14 total).",
         ["14 hires", "8 in engineering"],
     ),
+    (
+        "What is our net revenue retention and how is it trending?",
+        "Net revenue retention is 118%, up from 112% last quarter on strong upsells.",
+        "NRR is 118%, up from 112% QoQ.",
+        ["net revenue retention is 118%", "up from 112%"],
+    ),
+    (
+        "How much cash runway do we have at the current burn?",
+        "At $650K monthly net burn and $18.2M cash, runway is about 28 months.",
+        "Cash: $18.2M. Net burn: $650K/mo. Runway ~28 months.",
+        ["$18.2M cash", "28 months"],
+    ),
 ]
 
-ALT_MODELS = ["gpt-4o-mini", "claude-3-5-sonnet", "gpt-4-turbo"]
+ALT_MODELS = ["gpt-4o-mini", "claude-3-5-sonnet", "gpt-4-turbo", "gpt-4o", "claude-3-haiku"]
 
 # Multi-step agent runs that live in applications *other* than revenue-analytics,
 # so the Agent Runs tab is segmentable by application too (not just one area).
@@ -148,6 +237,54 @@ AGENT_RUN_SCENARIOS = [
         "gpt-4o",
         "Customer can't reset their password — outline the next steps.",
         "1) Verify identity, 2) trigger a reset email, 3) confirm inbox receipt.",
+    ),
+    (
+        "code-assistant",
+        "gpt-4o",
+        "Add pagination to this list endpoint without breaking clients.",
+        "Introduce optional page/limit params with a backwards-compatible default.",
+    ),
+    (
+        "eng-education",
+        "gpt-4-turbo",
+        "Walk me through designing a rate limiter for an API gateway.",
+        "Token-bucket per key in Redis; INCR+EXPIRE, return remaining + reset.",
+    ),
+    (
+        "eng-education",
+        "claude-3-haiku",
+        "Explain eventual consistency with a shopping-cart example.",
+        "Writes converge over time; the cart may briefly differ across replicas.",
+    ),
+    (
+        "customer-support",
+        "gpt-4o-mini",
+        "A user was double-charged — how do I resolve and reassure them?",
+        "Confirm the duplicate, issue a refund, apologize, and share the timeline.",
+    ),
+    (
+        "data-insights",
+        "gpt-4o",
+        "Which onboarding step loses the most users?",
+        "Step 3 (workspace setup) drops 22%; simplifying it should lift activation.",
+    ),
+    (
+        "data-insights",
+        "gpt-4o-mini",
+        "Summarize this week's active-user movement.",
+        "WAU up 6% WoW to 8,410, driven by returning users on the new dashboard.",
+    ),
+    (
+        "product-search",
+        "gpt-4o-mini",
+        "Find a quiet mechanical keyboard under $100 for an office.",
+        "Two in-catalog picks with silent switches under $100, with links.",
+    ),
+    (
+        "product-search",
+        "claude-3-haiku",
+        "Recommend noise-cancelling headphones with 30h+ battery.",
+        "Three catalog matches with 30h+ battery and active noise cancelling.",
     ),
 ]
 
@@ -177,13 +314,67 @@ def _seed_standalone_traces():
                 "error_message": None if status == TraceStatus.SUCCESS else "RateLimitError: 429",
             }
         )
-        # Backdate across ~12 days so the list and analytics look realistic.
-        trace.timestamp = utcnow() - timedelta(
-            days=random.randint(0, 12), hours=random.randint(0, 23), minutes=random.randint(0, 59)
-        )
+        # Backdate across ~30 days so the list and analytics look realistic.
+        trace.timestamp = _recent_when(30)
         created.append(trace)
     db.session.commit()
     return created
+
+
+# Diurnal weighting (index = hour): traffic peaks during working hours and dips
+# overnight, so the Requests feed and Analytics look like real usage.
+_HOUR_WEIGHTS = [
+    1, 1, 1, 1, 1, 1, 2, 4, 7, 9, 10, 10,
+    9, 9, 10, 10, 9, 7, 5, 4, 3, 2, 1, 1,
+]
+
+
+def _recent_when(max_days: int = 30):
+    """A backdated timestamp within the last ``max_days`` with a diurnal shape."""
+    day = random.randint(0, max_days - 1)
+    hour = random.choices(range(24), weights=_HOUR_WEIGHTS, k=1)[0]
+    base = utcnow() - timedelta(days=day)
+    return base.replace(
+        hour=hour, minute=random.randint(0, 59), second=random.randint(0, 59), microsecond=0
+    )
+
+
+_ERRORS = ["RateLimitError: 429", "APIConnectionError: connection reset", "Timeout after 30s"]
+
+
+def _seed_request_volume(count: int = 160):
+    """Generate a realistic volume of flat request traces across all applications.
+
+    Spreads ``count`` requests over the last 30 days with a diurnal shape, a mix
+    of models per application, varied token/latency profiles and a small error
+    rate — so Requests, the model/application filters and Analytics all look like
+    weeks of organic traffic rather than a handful of rows.
+    """
+    areas = list(AREA_PROMPTS.keys())
+    for _ in range(count):
+        project = random.choice(areas)
+        model = random.choice(AREA_MODELS[project])
+        prompt = random.choice(AREA_PROMPTS[project])
+        input_tokens = random.randint(80, 1600)
+        output_tokens = random.randint(40, 1200)
+        failed = random.random() < 0.06
+        trace = trace_service.create_trace(
+            {
+                "project": project,
+                "user_prompt": prompt,
+                "system_prompt": AREAS[project],
+                "model_name": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "latency_ms": round(random.uniform(180, 5200), 2),
+                "final_response": None if failed else "Answer generated from the request.",
+                "status": TraceStatus.FAILED if failed else TraceStatus.SUCCESS,
+                "error_message": random.choice(_ERRORS) if failed else None,
+            }
+        )
+        trace.timestamp = _recent_when(30)
+    db.session.commit()
+    return count
 
 
 def _build_scenario_conversation(model, question, answer, context, day_offset):
@@ -346,7 +537,7 @@ def _seed_area_agent_runs():
 
 
 def _seed_workflows():
-    """Register two workflow definitions and run an execution of each."""
+    """Register three workflow definitions and run several executions of each."""
     engine = WorkflowEngine()
 
     research_flow = {
@@ -370,28 +561,67 @@ def _seed_workflows():
             "done": {"type": "end"},
         },
     }
+    review_flow = {
+        "name": "code-review",
+        "version": "1.2",
+        "entry": "reviewer",
+        "nodes": {
+            "reviewer": {"type": "task", "role": "reviewer", "next": "tester"},
+            "tester": {"type": "task", "role": "tester", "next": "done"},
+            "done": {"type": "end"},
+        },
+    }
 
     definitions = [
         engine.register(research_flow, name="research-flow", version="1.0"),
         engine.register(triage_flow, name="support-triage", version="2.1"),
+        engine.register(review_flow, name="code-review", version="1.2"),
     ]
 
-    # A concrete execution (conversation) for the first definition.
+    # A few concrete executions per definition so the Workflows tab shows a
+    # definition with a run history rather than a single execution.
+    for run_idx in range(3):
+        orch = AgentOrchestrator(
+            conversation_name=f"Weekly research digest #{run_idx + 1}",
+            workflow_definition_id=definitions[0].id,
+        )
+        planner = orch.create_agent("Planner", role="planner")
+        researcher = orch.create_agent("Researcher", role="researcher", parent=planner)
+        writer = orch.create_agent("Writer", role="writer", parent=planner)
+        planner.execute()
+        researcher.execute()
+        writer.execute()
+        q = planner.ask(researcher, "Pull the three biggest changes this week.")
+        researcher.reply(q, "Revenue +16.7%, APAC +28%, gross margin 71%.")
+        planner.ask(writer, "Draft a two-paragraph digest from those figures.")
+        writer.reply(q, "This week the business accelerated…")
+        orch.finish()
+
+    for run_idx in range(2):
+        orch = AgentOrchestrator(
+            conversation_name=f"Support triage batch #{run_idx + 1}",
+            workflow_definition_id=definitions[1].id,
+        )
+        classifier = orch.create_agent("Classifier", role="classifier")
+        resolver = orch.create_agent("Resolver", role="resolver", parent=classifier)
+        classifier.execute()
+        resolver.execute()
+        q = classifier.ask(resolver, "Billing issue, high priority — resolve it.")
+        resolver.reply(q, "Refund issued and confirmation email sent.")
+        orch.finish()
+
     orch = AgentOrchestrator(
-        conversation_name="Weekly research digest",
-        workflow_definition_id=definitions[0].id,
+        conversation_name="PR #482 review",
+        workflow_definition_id=definitions[2].id,
     )
-    planner = orch.create_agent("Planner", role="planner")
-    researcher = orch.create_agent("Researcher", role="researcher", parent=planner)
-    writer = orch.create_agent("Writer", role="writer", parent=planner)
-    planner.execute()
-    researcher.execute()
-    writer.execute()
-    q = planner.ask(researcher, "Pull the three biggest changes this week.")
-    researcher.reply(q, "Revenue +16.7%, APAC +28%, gross margin 71%.")
-    planner.ask(writer, "Draft a two-paragraph digest from those figures.")
-    writer.reply(q, "This week the business accelerated…")
+    reviewer = orch.create_agent("Reviewer", role="reviewer")
+    tester = orch.create_agent("Tester", role="tester", parent=reviewer)
+    reviewer.execute()
+    tester.execute()
+    q = reviewer.ask(tester, "Run the suite against the new pagination logic.")
+    tester.reply(q, "All 42 tests pass; added 3 for the edge cases.")
     orch.finish()
+
     return definitions
 
 
@@ -451,10 +681,10 @@ def _rollup_parent_traces():
         trace.estimated_cost = round(float(cost), 6)
         trace.latency_ms = round(float(latency) or random.uniform(600, 2400), 2)
 
-        # Spread over the last ~12 days (deterministic per-trace via its id).
+        # Spread over the last ~30 days (deterministic per-trace via its id).
         jitter = random.Random(trace.id)
         when = utcnow() - timedelta(
-            days=jitter.randint(0, 12), hours=jitter.randint(0, 23),
+            days=jitter.randint(0, 29), hours=jitter.randint(0, 23),
             minutes=jitter.randint(0, 59),
         )
         trace.timestamp = when
@@ -518,12 +748,45 @@ def _backfill_projects():
 
 
 def _spread_evaluation_dates(run_ids):
-    """Backdate evaluation runs across the last week so Analytics has a series."""
+    """Backdate evaluation runs across the last ~4 weeks so Analytics has a series."""
     for offset, run_id in enumerate(run_ids):
         run = evaluation_service.get_evaluation_run(run_id)
         if run is not None:
-            run.created_at = utcnow() - timedelta(days=offset)
+            run.created_at = utcnow() - timedelta(
+                days=offset, hours=random.randint(0, 12)
+            )
     db.session.commit()
+
+
+def _seed_eval_timeseries(conversations, days: int = 28):
+    """Densify the Evaluations/Analytics time series.
+
+    Re-scores existing scenario conversations repeatedly and backdates each run
+    across the last ``days`` days, so the Analytics charts show a continuous
+    daily trend (quality/cost/latency) instead of a handful of points. Every run
+    is a real ``EvaluationRun`` with metrics — identical in shape to production.
+    """
+    engine = EvaluationEngine()
+    run_ids = []
+    for offset in range(days):
+        (conv_id, _run_id) = random.choice(conversations)
+        (_q, answer, _ctx, facts) = random.choice(SCENARIOS)
+        result = engine.evaluate(
+            conv_id,
+            reference=answer,
+            expected_facts=facts,
+            cost_budget=1.0,
+            latency_budget_ms=5000,
+            evaluation_type="quality",
+        )
+        run = evaluation_service.get_evaluation_run(result.evaluation_run_id)
+        if run is not None:
+            run.created_at = utcnow() - timedelta(
+                days=offset, hours=random.randint(0, 20), minutes=random.randint(0, 59)
+            )
+            run_ids.append(result.evaluation_run_id)
+    db.session.commit()
+    return len(run_ids)
 
 
 def seed(reset: bool = False):
@@ -533,15 +796,18 @@ def seed(reset: bool = False):
             db.drop_all()
             db.create_all()
 
-        # 1) Requests — flat traces.
+        # 1) Requests — a handful of hand-written flat traces…
         standalone = _seed_standalone_traces()
+        # …plus a high volume of generated traffic across every application so
+        # the Requests feed, filters and Analytics look like weeks of real use.
+        volume = _seed_request_volume(160)
 
         # 2/3/5) Conversations + Agent Runs + RAG Observatory.
         conversations = []  # (conversation_id, agent_run_id)
         for i, (question, answer, context, _facts) in enumerate(SCENARIOS):
             model = ["gpt-4o", "claude-3-5-sonnet", "gpt-4o-mini"][i % 3]
             conversations.append(
-                _build_scenario_conversation(model, question, answer, context, day_offset=i)
+                _build_scenario_conversation(model, question, answer, context, day_offset=i * 3)
             )
 
         # 2b) Agent runs in other applications so Agent Runs spans >1 area.
@@ -550,13 +816,13 @@ def seed(reset: bool = False):
         # 4) Workflows (+ their executions/conversations).
         definitions = _seed_workflows()
 
-        # 6) Replays — re-run a few conversations under alternate models.
+        # 6) Replays — re-run several conversations under alternate models.
         replay_count = 0
         for (conv_id, _run_id), model in zip(conversations, ALT_MODELS):
             ReplayEngine().replay(conv_id, model=model, temperature=0.3)
             replay_count += 1
 
-        # 7) Evaluations — rule-based scoring of every scenario conversation.
+        # 7) Evaluations — rule-based scoring of every scenario conversation…
         eval_run_ids = []
         for (conv_id, _run_id), (_q, answer, _ctx, facts) in zip(conversations, SCENARIOS):
             result = EvaluationEngine().evaluate(
@@ -568,12 +834,14 @@ def seed(reset: bool = False):
                 evaluation_type="quality",
             )
             eval_run_ids.append(result.evaluation_run_id)
-        # 10) Analytics — spread the evaluations across the last week.
+        # 10) Analytics — spread the core evaluations, then densify into a
+        # continuous ~4-week daily series so the charts read like real trends.
         _spread_evaluation_dates(eval_run_ids)
+        timeseries_evals = _seed_eval_timeseries(conversations, days=28)
 
-        # 8) Comparisons — one conversation vs several models.
+        # 8) Comparisons — several conversations each run against multiple models.
         comparison_ids = []
-        for (conv_id, _run_id), (_q, answer, _ctx, facts) in zip(conversations[:2], SCENARIOS[:2]):
+        for (conv_id, _run_id), (_q, answer, _ctx, facts) in zip(conversations[:3], SCENARIOS[:3]):
             cmp_result = ModelComparisonEngine().compare(
                 conv_id,
                 ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
@@ -584,8 +852,9 @@ def seed(reset: bool = False):
             )
             comparison_ids.extend(cmp_result.comparison_ids)
 
-        # 9) Diffs — multiple prompt versions on one run; two runs to trace-diff.
+        # 9) Diffs — multiple prompt versions on two runs; two runs to trace-diff.
         _seed_prompt_versions(conversations[0][1])
+        _seed_prompt_versions(conversations[1][1])
 
         db.session.commit()
 
@@ -600,12 +869,14 @@ def seed(reset: bool = False):
         # -- Summary ---------------------------------------------------------
         totals = {
             "traces (Requests)": Trace.query.count(),
-            "standalone traces added": len(standalone),
+            "hand-written standalone": len(standalone),
+            "generated request volume": volume,
             "area agent runs added": area_runs,
             "scenario conversations": len(conversations),
             "workflow definitions": len(definitions),
             "replays": replay_count,
-            "evaluations": len(eval_run_ids),
+            "core evaluations": len(eval_run_ids),
+            "timeseries evaluations": timeseries_evals,
             "comparisons": len(comparison_ids),
         }
         print("\nSeeded demo dataset (append-only):")
