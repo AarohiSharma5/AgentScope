@@ -235,6 +235,28 @@ def _paths() -> dict[str, Any]:
         "/agent-runs/{id}": {"get": _get_op("Agent Runs", "Fetch a single agent run.", "AgentRun")},
         "/retrievals": {"get": _list_op("RAG", "List RAG retrievals.", "Retrieval")},
         "/retrievals/{id}": {"get": _get_op("RAG", "Fetch a single retrieval.", "Retrieval")},
+        "/otel/v1/traces": {
+            "post": {
+                "tags": ["Agent Runs"],
+                "summary": "Ingest OpenTelemetry (OTLP/HTTP JSON) traces.",
+                "description": (
+                    "Accepts OTLP/HTTP JSON trace payloads from any OpenTelemetry-"
+                    "instrumented app (OTel GenAI semconv, OpenLLMetry, OpenInference). "
+                    "Each trace becomes an agent run; GenAI spans become steps."
+                ),
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": {"type": "object"}}},
+                },
+                "responses": {
+                    "200": {
+                        "description": "Accepted; OTLP-style partialSuccess plus an accept summary.",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    },
+                    "400": {"$ref": "#/components/responses/BadRequest"},
+                },
+            }
+        },
         "/workflows": {"get": _list_op("Workflows", "List multi-agent workflows.", "Workflow")},
         "/workflows/{id}": {"get": _get_op("Workflows", "Fetch a single workflow.", "Workflow")},
         "/conversations": {"get": _list_op("Workflows", "List conversations.", "Conversation")},

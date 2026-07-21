@@ -103,6 +103,32 @@ curl -X POST http://localhost:8000/api/retrievals \
        "embedding": {"model": "text-embedding-3-small", "dimension": 1536}}'
 ```
 
+## OpenTelemetry ingest (OTLP/HTTP JSON)
+
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| POST | `/api/otel/v1/traces` | Ingest OTLP/HTTP JSON traces; GenAI spans become agent runs. |
+
+Any OpenTelemetry-instrumented app can push GenAI traces to AgentScope over the
+standard **OTLP/HTTP JSON** protocol — no AgentScope SDK required. It understands
+the common conventions: **OTel GenAI semconv** (`gen_ai.*`), **OpenLLMetry**
+(`gen_ai.*` / `llm.*` / `traceloop.span.kind`), and **OpenInference**
+(`*.value` / `llm.token_count.*` / `openinference.span.kind`).
+
+Each OTLP trace becomes one **agent run**; each span becomes a step, classified
+as `llm` (with model, prompt, completion, token usage and priced cost), `tool`,
+`retrieval`, or a generic step. Point your exporter at the endpoint:
+
+```bash
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8000/api/otel/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json
+```
+
+It returns HTTP 200 with an OTLP-style `{"partialSuccess": {}}` object (so
+standard OTLP clients are satisfied) plus an accept summary
+(`accepted_spans`, `accepted_traces`, `runs`). Rate-limited like other ingest
+endpoints; server-side redaction (`INGEST_REDACT`) applies here too.
+
 ## Multi-agent workflows (v0.4)
 
 | Method | Endpoint | Description |

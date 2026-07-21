@@ -245,6 +245,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.agent_traces import agent_traces_bp
     from .routes.chat import chat_bp
     from .routes.rag import rag_bp
+    from .routes.otel import otel_bp
     from .routes.workflows import workflows_bp
     from .routes.evaluations import evaluations_bp
     from .routes.annotations import annotations_bp
@@ -272,6 +273,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
         agent_traces_bp,
         chat_bp,
         rag_bp,
+        otel_bp,
         workflows_bp,
         evaluations_bp,
         annotations_bp,
