@@ -10,6 +10,7 @@ persisted via :mod:`app.services.evaluation_service`.
     result = engine.evaluate(conversation_run_id, reference="...")
     print(result.overall_score, result.score("faithfulness"))
 """
+from .constraints import ConstraintEvaluator, build_constraint, constraint_evaluator
 from .context import EvaluationContext, MetricResult
 from .engine import EvaluationEngine, EvaluationError, EvaluationResult
 from .evaluators import (
@@ -29,6 +30,9 @@ __all__ = [
     "Evaluator",
     "LLMJudgeEvaluator",
     "CustomEvaluator",
+    "ConstraintEvaluator",
+    "constraint_evaluator",
+    "build_constraint",
     "Metrics",
     "default_evaluators",
 ]

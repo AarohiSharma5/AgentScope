@@ -49,6 +49,42 @@ future = engine.evaluate_async(conversation_run_id)
   `{"score", "notes"}`. There is **no hard dependency** on any provider — you
   supply the judge, so you choose the model.
 - **Custom** — subclass or wrap a function with `CustomEvaluator(name, fn, weight)`.
+- **Constraints / validity** — deterministic **hard-requirement** checks (below).
+
+## Constraints (validity checks)
+
+Lexical metrics like `correctness` and `faithfulness` measure *resemblance*, so
+they can score green even when the answer breaks a real requirement — it returned
+jobs needing "0-4 years" when the ask was "0-3", or drifted to the wrong sector.
+Those are **validity** problems, and validity is deterministic. Pass declarative
+`constraints` (JSON-friendly dicts, no custom function needed) and the engine adds
+a `constraint_validity` metric:
+
+```python
+result = engine.evaluate(conversation_run_id, constraints=[
+    # never promise more years of experience than asked
+    {"type": "numeric_range", "pattern": r"(\d+)\s*-\s*(\d+)\s*years",
+     "max": 3, "name": "experience_ceiling"},
+    # stay on the requested sector (any of these terms present)
+    {"type": "contains", "values": ["tech", "software"], "mode": "any"},
+    # never leak an internal tool name
+    {"type": "not_contains", "values": ["__debug__"]},
+    # structured output must have the required shape
+    {"type": "json_keys", "required": ["title", "url"], "target": "answer"},
+])
+print(result.score("constraint_validity"))
+```
+
+Constraint types: `contains` / `not_contains`, `regex`, `numeric_range` (with an
+optional extraction `pattern`), `allowed_values`, `length` (chars/words),
+`json_keys` (required keys + types), and `custom` (any `fn(ctx)`). Each targets
+`answer` by default; set `target` to `user_prompt`, `retrieved_context`,
+`reference`, or `extra.<key>`.
+
+A **hard** failure (the default `severity`) gates the metric to `0.0` so a genuine
+violation can't be averaged away by other passing checks; use `severity: "soft"`
+for advisory checks that only lower the fraction. The metric is weighted heavily
+(`2.0`) by default so it dominates the overall score.
 
 ## Evaluate over REST
 

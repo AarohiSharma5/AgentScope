@@ -235,3 +235,34 @@ def test_list_evaluation_runs(conversation):
 def test_evaluate_nonexistent_raises(app_ctx):
     with pytest.raises(EvaluationError):
         EvaluationEngine().evaluate(999999)
+
+
+# -- Constraint / validity evaluator (C8) -----------------------------------
+
+
+def test_constraints_pass_and_persist(conversation):
+    engine = EvaluationEngine()
+    result = engine.evaluate(
+        conversation,
+        constraints=[{"type": "contains", "values": ["Paris"]}],
+    )
+    assert result.ok
+    assert result.score(Metrics.CONSTRAINT_VALIDITY) == 1.0
+    stored = evaluation_service.get_evaluation_run(result.evaluation_run_id)
+    # 10 built-ins + the constraint metric; mixed type (rule + custom).
+    assert Metrics.CONSTRAINT_VALIDITY in {m.metric_name for m in stored.metrics}
+    assert stored.evaluation_type == "mixed"
+
+
+def test_constraint_hard_failure_gates_metric(conversation):
+    engine = EvaluationEngine()
+    result = engine.evaluate(
+        conversation,
+        # The answer is about Paris; forbid it -> hard failure -> gated to 0.
+        constraints=[{"type": "not_contains", "values": ["Paris"], "severity": "hard"}],
+    )
+    assert result.score(Metrics.CONSTRAINT_VALIDITY) == 0.0
+    stored = evaluation_service.get_evaluation_run(result.evaluation_run_id)
+    metric = next(m for m in stored.metrics if m.metric_name == Metrics.CONSTRAINT_VALIDITY)
+    assert metric.metric_value == 0.0
+    assert "gated to 0" in (metric.notes or "")

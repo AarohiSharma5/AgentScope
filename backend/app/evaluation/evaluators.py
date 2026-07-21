@@ -47,6 +47,7 @@ class Metrics:
     MEMORY_USAGE = "memory_usage"
     LATENCY_SCORE = "latency_score"
     COST_SCORE = "cost_score"
+    CONSTRAINT_VALIDITY = "constraint_validity"
 
 
 # -- Text helpers -----------------------------------------------------------

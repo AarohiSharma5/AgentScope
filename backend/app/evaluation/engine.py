@@ -20,6 +20,7 @@ from flask import current_app
 
 from ..models.agent_trace import AgentStatus
 from ..services import evaluation_service
+from .constraints import constraint_evaluator
 from .context import MetricResult
 from .evaluators import Evaluator, LLMJudgeEvaluator, default_evaluators
 
@@ -123,8 +124,14 @@ class EvaluationEngine:
         model_name: Optional[str] = None,
         weights: Optional[dict[str, float]] = None,
         metadata: Optional[dict] = None,
+        constraints: Optional[list] = None,
     ) -> EvaluationResult:
-        """Evaluate a conversation, persisting the run and every metric."""
+        """Evaluate a conversation, persisting the run and every metric.
+
+        ``constraints`` (declarative dicts/callables; see
+        :mod:`app.evaluation.constraints`) appends a deterministic
+        ``constraint_validity`` metric for hard product-requirement checks.
+        """
         ctx = evaluation_service.build_evaluation_context(
             conversation_run_id,
             reference=reference,
@@ -137,7 +144,9 @@ class EvaluationEngine:
                 f"conversation {conversation_run_id} not found or has no trace"
             )
 
-        evs = evaluators if evaluators is not None else self.evaluators
+        evs = list(evaluators) if evaluators is not None else list(self.evaluators)
+        if constraints:
+            evs.append(constraint_evaluator(constraints))
         run = evaluation_service.create_evaluation_run(
             conversation_run_id=conversation_run_id,
             evaluation_type=evaluation_type or _infer_type(evs),
