@@ -783,6 +783,26 @@ function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy
               />
               <span className="text-gray-400">
                 <span className="text-gray-200">{f.title}.</span> {f.detail}
+                {f.suspects?.length > 0 && (
+                  <span className="mt-1 block text-xs text-gray-500">
+                    Suspected change{f.suspects.length > 1 ? "s" : ""}:{" "}
+                    {f.suspects.map((s, i) => (
+                      <span key={`${s.date}-${s.label}-${i}`}>
+                        <Link
+                          to={`/comparisons?label=${encodeURIComponent(s.label)}&since=${s.date}`}
+                          className="text-accent hover:underline"
+                          title="Isolate this change by re-running conversations across models"
+                        >
+                          {s.label}
+                        </Link>
+                        {i < f.suspects.length - 1 ? ", " : ""}
+                      </span>
+                    ))}
+                    {f.suspects.length > 1
+                      ? " — can't be auto-attributed; isolate by replaying with one reverted at a time."
+                      : " — Investigate to confirm the cause."}
+                  </span>
+                )}
               </span>
             </li>
           ))}

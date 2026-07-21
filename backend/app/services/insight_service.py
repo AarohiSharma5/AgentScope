@@ -15,10 +15,12 @@ Two layers, deliberately decoupled:
 import json
 import logging
 import os
+from datetime import date as _date_cls
+from datetime import timedelta
 from typing import Callable, Optional
 
 from ..utils.timeutils import utcnow
-from . import budget_service, evaluation_service
+from . import annotation_service, budget_service, evaluation_service
 
 logger = logging.getLogger("agentscope")
 
@@ -59,6 +61,35 @@ def _fmt_score(v: Optional[float]) -> str:
 
 def _date(iso: Optional[str]) -> str:
     return iso or "an unknown day"
+
+
+def _prev_day(iso: Optional[str]) -> Optional[str]:
+    """The calendar day before ``iso`` (YYYY-MM-DD), or None if unparseable.
+
+    A change deployed late in the day often first shows up in the *next* day's
+    metrics, so annotation matching looks at the finding's day and the one before.
+    """
+    try:
+        y, m, d = (int(p) for p in iso.split("-"))
+        return (_date_cls(y, m, d) - timedelta(days=1)).isoformat()
+    except (AttributeError, ValueError):
+        return None
+
+
+def _extreme_day(daily: list, pick: Callable, mode: str) -> Optional[str]:
+    """Date of the min (``mode='min'``) or max (``'max'``) value of ``pick``.
+
+    Used to give a period-wide trend finding a concrete "worst day" so the same
+    annotation-correlation can point at likely culprits.
+    """
+    best = None
+    for d in daily:
+        v = pick(d)
+        if v is None:
+            continue
+        if best is None or (v > best[1] if mode == "max" else v < best[1]):
+            best = (d["date"], v)
+    return best[0] if best else None
 
 
 def _weighted_halves(daily: list, pick: Callable) -> Optional[tuple]:
@@ -142,8 +173,11 @@ def build_insights(
 
     findings: list[dict] = []
 
-    def add(fid, severity, title, detail):
-        findings.append({"id": fid, "severity": severity, "title": title, "detail": detail})
+    def add(fid, severity, title, detail, date=None):
+        finding = {"id": fid, "severity": severity, "title": title, "detail": detail}
+        if date:
+            finding["date"] = date
+        findings.append(finding)
 
     evals = sum(d.get("evaluations") or 0 for d in daily)
 
@@ -171,7 +205,8 @@ def build_insights(
     q = _pct_change(_weighted_halves(daily, lambda d: d.get("evaluation_score")))
     if q is not None and q <= -0.05:
         add("quality_down", "crit" if q <= -0.15 else "warn", "Quality regression",
-            f"Average score fell {round(abs(q) * 100)}% versus earlier in the {window_label}.")
+            f"Average score fell {round(abs(q) * 100)}% versus earlier in the {window_label}.",
+            date=_extreme_day(daily, lambda d: d.get("evaluation_score"), "min"))
     elif q is not None and q >= 0.05:
         add("quality_up", "info", "Quality improving",
             f"Average score rose {round(q * 100)}% across the {window_label}.")
@@ -181,35 +216,42 @@ def build_insights(
         inc = fh[1] - fh[0]
         if inc >= 0.05:
             add("failure_up", "crit" if inc >= 0.15 else "warn", "Failure-rate spike",
-                f"Failure rate rose {round(inc * 100)} points versus earlier in the {window_label}.")
+                f"Failure rate rose {round(inc * 100)} points versus earlier in the {window_label}.",
+                date=_extreme_day(daily, lambda d: d.get("failure_rate"), "max"))
 
     c = _pct_change(_weighted_halves(daily, per_eval_cost))
     if c is not None and c >= 0.15:
         add("cost_up", "warn", "Cost climbing",
-            f"Cost per evaluation rose {round(c * 100)}% across the {window_label}.")
+            f"Cost per evaluation rose {round(c * 100)}% across the {window_label}.",
+            date=_extreme_day(daily, per_eval_cost, "max"))
 
     lat = _pct_change(_weighted_halves(daily, lambda d: d.get("latency_ms")))
     if lat is not None and lat >= 0.20:
         add("latency_up", "warn", "Latency climbing",
-            f"Average latency rose {round(lat * 100)}% across the {window_label}.")
+            f"Average latency rose {round(lat * 100)}% across the {window_label}.",
+            date=_extreme_day(daily, lambda d: d.get("latency_ms"), "max"))
 
     # -- Per-day anomalies (pinpoint a specific spike/dip) --
     a = _anomaly(daily, per_eval_cost, "high")
     if a:
         add("cost_anomaly", "warn", "Cost spike",
-            f"{_date(a[0])} spiked to {_fmt_cost(a[1])}/eval (~{a[2]:.1f}σ above normal).")
+            f"{_date(a[0])} spiked to {_fmt_cost(a[1])}/eval (~{a[2]:.1f}σ above normal).",
+            date=a[0])
     a = _anomaly(daily, lambda d: d.get("latency_ms"), "high")
     if a:
         add("latency_anomaly", "warn", "Latency spike",
-            f"{_date(a[0])} spiked to {_fmt_ms(a[1])} average latency (~{a[2]:.1f}σ above normal).")
+            f"{_date(a[0])} spiked to {_fmt_ms(a[1])} average latency (~{a[2]:.1f}σ above normal).",
+            date=a[0])
     a = _anomaly(daily, lambda d: d.get("failure_rate"), "high")
     if a:
         add("failure_anomaly", "warn", "Failure spike",
-            f"{_date(a[0])} saw failures jump to {_fmt_pct(a[1])} (~{a[2]:.1f}σ above normal).")
+            f"{_date(a[0])} saw failures jump to {_fmt_pct(a[1])} (~{a[2]:.1f}σ above normal).",
+            date=a[0])
     a = _anomaly(daily, lambda d: d.get("evaluation_score"), "low")
     if a:
         add("score_anomaly", "warn", "Quality dip",
-            f"{_date(a[0])} dipped to a {_fmt_score(a[1])} average score (~{abs(a[2]):.1f}σ below normal).")
+            f"{_date(a[0])} dipped to a {_fmt_score(a[1])} average score (~{abs(a[2]):.1f}σ below normal).",
+            date=a[0])
 
     # -- Cross-model findings --
     priced = [m for m in by_model if m.get("average_cost") and m.get("evaluations")]
@@ -244,11 +286,48 @@ def build_insights(
             add(f"budget_{b.id}", "warn", "Budget at risk",
                 f"'{b.name}' is at risk: {label} is {st['actual']} (target {arrow} {b.threshold_value}).")
 
+    # -- Attribution: correlate dated findings with annotated changes --
+    # A dashboard can't *prove* which change caused a regression (correlation is
+    # not causation, and multiple same-day changes are indistinguishable in the
+    # aggregate). What it can do is narrow the suspects: attach the changes
+    # annotated on a finding's day (or the day before) so the user knows what to
+    # isolate via replay/comparison.
+    try:
+        annotations = annotation_service.list_annotations(days=days)
+    except Exception:  # noqa: BLE001 - annotation lookup is best-effort context
+        annotations = []
+    changes_by_date: dict[str, list[str]] = {}
+    changes: list[dict] = []
+    for ann in annotations:
+        iso = ann.annotated_at.date().isoformat() if ann.annotated_at else None
+        if not iso:
+            continue
+        changes_by_date.setdefault(iso, []).append(ann.label)
+        changes.append({"date": iso, "label": ann.label})
+
+    if changes_by_date:
+        for f in findings:
+            fd = f.get("date")
+            if not fd:
+                continue
+            suspects = []
+            seen = set()
+            for cand in (fd, _prev_day(fd)):
+                for label in changes_by_date.get(cand, []):
+                    key = (cand, label)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    suspects.append({"date": cand, "label": label})
+            if suspects:
+                f["suspects"] = suspects
+
     findings.sort(key=lambda f: _SEVERITY_ORDER.get(f["severity"], 9))
 
     digest = {
         "window": window_label,
         "model": model,
+        "changes": changes,
         "evaluations": evals,
         "avg_score": _round(avg_score, 4),
         "cost_per_eval": _round(cost_per_eval, 6),
