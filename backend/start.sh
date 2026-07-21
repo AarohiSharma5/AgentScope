@@ -4,13 +4,27 @@
 # ..."` in Render's dockerCommand — avoids shell quoting/operator ambiguity that
 # can make the platform treat the whole line as a single (missing) command.
 #
-# 1. Prepare the database for DEMO_MODE (seed/reseed). This is a no-op when
-#    DEMO_MODE is off, and it never aborts startup (demo_boot swallows errors).
-# 2. Hand off to gunicorn, bound to the port the platform provides ($PORT), as a
-#    single threaded worker (the live-stream hub is in-process).
+# Ordering matters: seeding a *networked* database (e.g. Neon over the public
+# internet) is dominated by per-statement round-trips and can take several
+# minutes. If we blocked startup on it, the web server would never bind in time
+# and the platform's health check (GET /api/health) would time out and fail the
+# deploy — which is exactly what happened before this change.
+#
+# So we:
+# 1. Kick off demo_boot in the *background*. It seeds/reseeds when DEMO_MODE is
+#    on (and is a no-op otherwise); it swallows its own errors. Data trickles in
+#    over the next few minutes without holding up the server.
+# 2. Immediately exec gunicorn so it binds to $PORT and answers the health probe
+#    right away. `create_app()` runs `db.create_all()` at boot, so the schema
+#    exists before any request, and /api/health is a static response that never
+#    touches the database.
 set -e
 
-python demo_boot.py || true
+# Small head start so gunicorn's own create_app()/db.create_all() finishes first
+# on a brand-new (empty) database; by the time the seeder connects, the schema
+# already exists and its create_all() is a no-op — avoiding a concurrent
+# CREATE TABLE race. A no-op on an already-populated DB.
+( sleep 10; python demo_boot.py ) &
 
 exec gunicorn \
   -b "0.0.0.0:${PORT:-8000}" \

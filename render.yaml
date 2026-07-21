@@ -11,8 +11,12 @@
 #
 # Notes
 #  * Free web services spin down when idle; the first request after that wakes
-#    them (~30–50s). With DEMO_RESET_ON_BOOT=true that wake reseeds a pristine
-#    demo — which is exactly the "resets periodically" behaviour we want.
+#    them (~30–50s). Seeding runs in the *background* (see start.sh), so the wake
+#    is fast regardless of DB size and the health check never times out.
+#  * DEMO_RESET_ON_BOOT is "false": on boot we only seed what's missing (a fresh
+#    DB gets the full dataset once; a warm DB tops up just the fast analytics
+#    history if absent, then persists). Set it to "true" only for a one-off full
+#    rebuild — it wipes and reseeds everything, which is slow over a networked DB.
 #  * The API runs a single threaded worker on purpose (in-process live-stream
 #    hub); no Redis needed for a demo.
 
@@ -25,15 +29,16 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /api/health
-    # Seed the demo DB once, then start the server. Delegated to start.sh so the
-    # platform command stays a simple, unambiguous invocation (no inline shell
-    # operators/quoting — that previously made Render exit 127 "not found").
+    # Start the server immediately and seed in the background. Delegated to
+    # start.sh so the platform command stays a simple, unambiguous invocation (no
+    # inline shell operators/quoting — that previously made Render exit 127
+    # "not found"), and so the slow seed can't block the health check.
     dockerCommand: sh start.sh
     envVars:
       - key: DEMO_MODE
         value: "true"
       - key: DEMO_RESET_ON_BOOT
-        value: "true"
+        value: "false"
       - key: DATABASE_URL
         sync: false # paste your Neon/Supabase Postgres URL in the dashboard
       - key: CORS_ORIGINS
