@@ -264,6 +264,7 @@ export const api = {
     request(`/dashboard/evaluation-analytics${buildQuery(params)}`, opts),
   getEvaluationInsights: (params, opts) =>
     request(`/dashboard/evaluation-insights${buildQuery(params)}`, opts),
+  getInsightsStatus: (opts) => request("/dashboard/insights-status", opts),
 
   // Timeline annotations (deploy / change markers)
   getAnnotations: (params, opts) => request(`/annotations${buildQuery(params)}`, opts),

@@ -456,6 +456,93 @@ def render_report_markdown(insights: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _resolve_insights_provider(
+    provider_name: Optional[str] = None, model: Optional[str] = None
+):
+    """Resolve the configured insights (provider_name, model, provider|None).
+
+    The provider defaults to ``INSIGHTS_PROVIDER`` (env, else ``openai``) and the
+    model to ``INSIGHTS_MODEL`` (env, else the provider's own default). Returns
+    ``provider=None`` if the name is unknown/uninstantiable — never raises.
+    """
+    provider_name = provider_name or os.environ.get("INSIGHTS_PROVIDER", "openai")
+    model = model or os.environ.get("INSIGHTS_MODEL")
+    try:
+        from ..providers import provider_registry
+
+        provider = provider_registry.create(provider_name)
+    except Exception:  # noqa: BLE001 - unknown/misconfigured provider is non-fatal
+        return provider_name, model, None
+    if model is None:
+        model = getattr(provider, "default_model", None)
+    return provider_name, model, provider
+
+
+def ai_summary_status(
+    provider_name: Optional[str] = None, model: Optional[str] = None
+) -> dict:
+    """Report whether AI summaries are available and how to enable them.
+
+    Powers the dashboard's "AI ready / AI off" indicator so users know the
+    feature's state *before* clicking, plus a precise hint (which env var to set)
+    when it's off. Purely local — no network call to the provider.
+    """
+    provider_name, model, provider = _resolve_insights_provider(provider_name, model)
+    if provider is None:
+        return {
+            "available": False,
+            "provider": provider_name,
+            "model": model,
+            "reason": f"Unknown provider '{provider_name}'.",
+            "hint": "Set INSIGHTS_PROVIDER to a registered provider (e.g. openai).",
+        }
+    if not provider.is_configured():
+        key_env = getattr(provider, "api_key_env", None)
+        hint = (
+            f"Set {key_env} to enable AI summaries."
+            if key_env
+            else "Provide credentials for this provider to enable AI summaries."
+        )
+        return {
+            "available": False,
+            "provider": provider_name,
+            "model": model,
+            "reason": f"Provider '{provider_name}' is not configured.",
+            "hint": hint,
+            "api_key_env": key_env,
+        }
+
+    # Keyless/local providers (e.g. Ollama) report configured=True even when the
+    # server isn't running — "no key needed" says nothing about reachability. So
+    # verify with a health check before claiming AI is available.
+    if not getattr(provider, "requires_api_key", True):
+        try:
+            health = provider.health_check()
+        except Exception:  # noqa: BLE001 - a failing health check just means "off"
+            health = None
+        if health is None or not getattr(health, "healthy", False):
+            detail = getattr(health, "detail", "") or "not reachable"
+            return {
+                "available": False,
+                "provider": provider_name,
+                "model": model,
+                "reason": f"Provider '{provider_name}' is not reachable ({detail}).",
+                "hint": (
+                    f"Start the local server, e.g. run `ollama serve` and "
+                    f"`ollama pull {model or 'llama3.2'}`."
+                    if provider_name == "ollama"
+                    else "Start the local provider server, then reload."
+                ),
+            }
+
+    return {
+        "available": True,
+        "provider": provider_name,
+        "model": model,
+        "reason": "AI summaries are enabled.",
+    }
+
+
 def generate_ai_summary(
     digest: dict,
     findings: list,
@@ -469,19 +556,16 @@ def generate_ai_summary(
     unknown provider, missing key, network/parse error — returns ``None`` so the
     caller falls back to the heuristic summary. Never raises.
     """
-    provider_name = provider_name or os.environ.get("INSIGHTS_PROVIDER", "openai")
-    model = model or os.environ.get("INSIGHTS_MODEL")
-    try:
-        from ..providers import ChatMessage, Role, provider_registry
-
-        provider = provider_registry.create(provider_name)
-    except Exception:  # noqa: BLE001 - unknown/misconfigured provider is non-fatal
+    provider_name, model, provider = _resolve_insights_provider(provider_name, model)
+    if provider is None:
         logger.info("AI insights: provider %r unavailable", provider_name)
         return None
 
     if not provider.is_configured():
         logger.info("AI insights: provider %r is not configured (no API key)", provider_name)
         return None
+
+    from ..providers import ChatMessage, Role
 
     system = (
         "You are a senior AI-observability analyst. Given a JSON digest of an "

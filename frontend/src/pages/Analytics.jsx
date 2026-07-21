@@ -733,10 +733,21 @@ function metricForFinding(id) {
   return null;
 }
 
-function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy }) {
+function InsightsCard({
+  insights,
+  aiStatus,
+  onGenerateAI,
+  aiBusy,
+  onDownload,
+  downloadBusy,
+}) {
   if (!insights) return null;
   const { summary, summary_source: source, findings = [] } = insights;
   const isAI = source === "ai";
+  const aiReady = aiStatus?.available === true;
+  const aiModelLabel = aiStatus
+    ? [aiStatus.provider, aiStatus.model].filter(Boolean).join(" · ")
+    : "";
   return (
     <Card className="p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -745,6 +756,18 @@ function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy
           {isAI && (
             <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] uppercase text-accent">
               ✨ AI
+            </span>
+          )}
+          {aiStatus && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                aiReady
+                  ? "bg-emerald-500/15 text-emerald-300"
+                  : "bg-ink-700 text-gray-500"
+              }`}
+              title={aiReady ? `LLM: ${aiModelLabel}` : aiStatus.hint || aiStatus.reason}
+            >
+              {aiReady ? `AI ready · ${aiModelLabel}` : "AI off"}
             </span>
           )}
         </div>
@@ -761,8 +784,13 @@ function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy
           <button
             type="button"
             onClick={onGenerateAI}
-            disabled={aiBusy}
-            className="rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+            disabled={aiBusy || aiStatus?.available === false}
+            title={
+              aiStatus?.available === false
+                ? aiStatus.hint || aiStatus.reason
+                : "Generate an executive summary with the configured LLM"
+            }
+            className="rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {aiBusy ? "Summarizing…" : "✨ Summarize with AI"}
           </button>
@@ -771,11 +799,17 @@ function InsightsCard({ insights, onGenerateAI, aiBusy, onDownload, downloadBusy
 
       <p className="text-sm leading-relaxed text-gray-300">{summary}</p>
 
-      {source === "ai_unavailable" && (
+      {(source === "ai_unavailable" || aiStatus?.available === false) && (
         <p className="mt-2 text-xs text-amber-300/80">
-          No LLM provider configured — showing the heuristic summary. Set an API key (e.g.
-          <span className="font-mono"> OPENAI_API_KEY</span>) or
-          <span className="font-mono"> INSIGHTS_PROVIDER</span> to enable AI summaries.
+          {source === "ai_unavailable"
+            ? "No LLM configured — showing the heuristic summary. "
+            : "AI summaries are off — showing the heuristic summary. "}
+          {aiStatus?.hint || (
+            <>
+              Set an API key (e.g. <span className="font-mono">OPENAI_API_KEY</span>) or{" "}
+              <span className="font-mono">INSIGHTS_PROVIDER</span> to enable AI summaries.
+            </>
+          )}
         </p>
       )}
 
@@ -1077,6 +1111,7 @@ export default function Analytics() {
   const [liveTick, setLiveTick] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [aiStatus, setAiStatus] = useState(null);
   const [insightsAiBusy, setInsightsAiBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [savedViews, setSavedViews] = useState([]);
@@ -1174,6 +1209,19 @@ export default function Analytics() {
       active = false;
     };
   }, [days, model, liveTick]);
+
+  // Whether an LLM is configured for AI summaries (provider/model + hint). Fetched
+  // once so the Insights card can show an "AI ready / off" state before clicking.
+  useEffect(() => {
+    let active = true;
+    api
+      .getInsightsStatus()
+      .then((s) => active && setAiStatus(s))
+      .catch(() => active && setAiStatus(null));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const generateAiInsights = async () => {
     setInsightsAiBusy(true);
@@ -1372,6 +1420,7 @@ export default function Analytics() {
 
       <InsightsCard
         insights={insights}
+        aiStatus={aiStatus}
         onGenerateAI={generateAiInsights}
         aiBusy={insightsAiBusy}
         onDownload={downloadReport}

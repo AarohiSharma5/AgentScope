@@ -111,6 +111,62 @@ def test_insights_ai_unavailable_falls_back(client, monkeypatch):
     assert data["summary"]  # heuristic summary still present
 
 
+def test_insights_status_reports_available(client, monkeypatch):
+    """When a configured provider is selected, status reports it as available."""
+    provider_registry.register(_FakeInsightProvider)
+    monkeypatch.setenv("INSIGHTS_PROVIDER", "fake-insights")
+    monkeypatch.delenv("INSIGHTS_MODEL", raising=False)
+    try:
+        data = client.get("/api/dashboard/insights-status").get_json()
+        assert data["available"] is True
+        assert data["provider"] == "fake-insights"
+        assert data["model"] == "fake-1"  # falls back to the provider default
+    finally:
+        provider_registry.unregister("fake-insights")
+
+
+def test_insights_status_reports_unknown_provider(client, monkeypatch):
+    monkeypatch.setenv("INSIGHTS_PROVIDER", "does-not-exist-xyz")
+    data = client.get("/api/dashboard/insights-status").get_json()
+    assert data["available"] is False
+    assert "Unknown provider" in data["reason"]
+    assert data["hint"]
+
+
+class _UnreachableLocalProvider(_FakeInsightProvider):
+    """A keyless (local) provider whose server is down."""
+
+    name = "fake-local-down"
+    requires_api_key = False
+
+    def health_check(self) -> HealthStatus:
+        return HealthStatus(healthy=False, configured=True, detail="connection refused")
+
+
+def test_insights_status_local_provider_unreachable(client, monkeypatch):
+    """Keyless providers (e.g. Ollama) are only 'available' if the server is up."""
+    provider_registry.register(_UnreachableLocalProvider)
+    monkeypatch.setenv("INSIGHTS_PROVIDER", "fake-local-down")
+    try:
+        data = client.get("/api/dashboard/insights-status").get_json()
+        assert data["available"] is False
+        assert "not reachable" in data["reason"]
+        assert data["hint"]
+    finally:
+        provider_registry.unregister("fake-local-down")
+
+
+def test_insights_status_reports_unconfigured_key(client, monkeypatch):
+    """A real provider that requires a key it doesn't have -> off, with a hint."""
+    monkeypatch.setenv("INSIGHTS_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("INSIGHTS_MODEL", raising=False)
+    data = client.get("/api/dashboard/insights-status").get_json()
+    assert data["available"] is False
+    assert data["api_key_env"] == "OPENAI_API_KEY"
+    assert "OPENAI_API_KEY" in data["hint"]
+
+
 def _mk_day(date_iso, score):
     return {
         "date": date_iso, "evaluation_score": score, "evaluations": 10,

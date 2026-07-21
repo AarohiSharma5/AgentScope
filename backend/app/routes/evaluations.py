@@ -510,6 +510,16 @@ def evaluation_insights():
     return jsonify(data)
 
 
+@evaluations_bp.get("/dashboard/insights-status")
+def insights_status():
+    """Report whether AI-generated insight summaries are available.
+
+    Lets the dashboard show an "AI ready / AI off" indicator and a precise
+    enablement hint without the user having to click and discover it fails.
+    """
+    return jsonify(insight_service.ai_summary_status())
+
+
 @evaluations_bp.get("/dashboard/evaluation-report")
 def evaluation_report():
     """Return a shareable analytics digest (the content of a weekly report).
