@@ -789,7 +789,17 @@ def _seed_eval_timeseries(conversations, days: int = 28):
     return len(run_ids)
 
 
-def seed(reset: bool = False):
+def seed(reset: bool = False, lean: bool = False):
+    """Seed the full demo dataset.
+
+    ``lean=True`` skips the two heavy, high-volume loops — generated request
+    volume and the multi-week evaluation time-series — which are pure
+    Requests/Analytics padding. Use it to top up an instance that already has
+    that volume (e.g. from the analytics seeder) with only the *structural*
+    tabs (Conversations/RAG/Workflows/Replays/Comparisons/Diffs). It finishes in
+    a minute or two, so it completes over a networked/serverless database before
+    the connection can be recycled.
+    """
     app = create_app()
     with app.app_context():
         if reset:
@@ -800,7 +810,7 @@ def seed(reset: bool = False):
         standalone = _seed_standalone_traces()
         # …plus a high volume of generated traffic across every application so
         # the Requests feed, filters and Analytics look like weeks of real use.
-        volume = _seed_request_volume(160)
+        volume = 0 if lean else _seed_request_volume(160)
 
         # 2/3/5) Conversations + Agent Runs + RAG Observatory.
         conversations = []  # (conversation_id, agent_run_id)
@@ -837,7 +847,7 @@ def seed(reset: bool = False):
         # 10) Analytics — spread the core evaluations, then densify into a
         # continuous ~4-week daily series so the charts read like real trends.
         _spread_evaluation_dates(eval_run_ids)
-        timeseries_evals = _seed_eval_timeseries(conversations, days=28)
+        timeseries_evals = 0 if lean else _seed_eval_timeseries(conversations, days=28)
 
         # 8) Comparisons — several conversations each run against multiple models.
         comparison_ids = []

@@ -128,11 +128,23 @@ class Config:
     else:
         SQLALCHEMY_ENGINE_OPTIONS = {
             "pool_pre_ping": True,  # detect dropped connections before using them
-            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "1800")),  # recycle every 30m
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "280")),  # < serverless idle cutoff
             "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
             "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
             "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
             "pool_use_lifo": True,  # reuse hot connections, let idle ones expire
+            # TCP keepalives keep a checked-out connection alive across quiet
+            # stretches so serverless Postgres (e.g. Neon's pooler) doesn't
+            # silently drop it mid-operation — the "server closed the connection
+            # unexpectedly" failure that otherwise kills long batch jobs/seeds.
+            # psycopg2-specific; harmless for other drivers we might use.
+            "connect_args": {
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+                "connect_timeout": 10,
+            },
         }
 
     # Short-lived in-process cache TTL (seconds) for expensive read-only
